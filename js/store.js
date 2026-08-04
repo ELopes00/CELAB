@@ -187,10 +187,12 @@
 
   /* ---------- Seed inicial ------------------------------------------------- */
 
+  // Variável de credencial
+
   function usuariosPadrao() {
     return [
-      { id: uid(), usuario: 'admin',   senha: 'admin123',   nome: 'Administrador CELAB',    perfil: 'admin',   criadoEm: agora() },
-      { id: uid(), usuario: 'tecnico', senha: 'tecnico123', nome: 'Técnico de Laboratório', perfil: 'tecnico', criadoEm: agora() }
+      { id: uid(), usuario: user_admin,   senha: password_admin,   nome: 'Administrador CELAB',    perfil: 'admin',   criadoEm: agora() },
+      { id: uid(), usuario: user_tecnico, senha: password_tecnico, nome: 'Técnico de Laboratório', perfil: 'tecnico', criadoEm: agora() }
     ];
   }
 
