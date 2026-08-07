@@ -190,9 +190,12 @@
   // Variável de credencial
 
   function usuariosPadrao() {
+    var cred = CELAB.CREDENCIAIS;
     return [
-      { id: uid(), usuario: user_admin,   senha: password_admin,   nome: 'Administrador CELAB',    perfil: 'admin',   criadoEm: agora() },
-      { id: uid(), usuario: user_tecnico, senha: password_tecnico, nome: 'Técnico de Laboratório', perfil: 'tecnico', criadoEm: agora() }
+      { id: uid(), usuario: cred.admin.usuario,   senha: cred.admin.senha,   
+        nome: 'Administrador CELAB',    perfil: 'admin',   criadoEm: agora() },
+      { id: uid(), usuario: cred.tecnico.usuario, senha: cred.tecnico.senha, 
+        nome: 'Técnico de Laboratório', perfil: 'tecnico', criadoEm: agora() }
     ];
   }
 
