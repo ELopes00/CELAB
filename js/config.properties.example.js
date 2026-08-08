@@ -1,7 +1,7 @@
 // variavel usuário e login
-window.CELAB = window.CELAB || {};
+window.SAGETI = window.SAGETI || {};
 
-CELAB.CREDENCIAIS = {
+SAGETI.CREDENCIAIS = {
     admin: {usuario: 'admin', senha: 'root123'},
     tecnico: {usuario: 'tecnico', senha: 'tecnico123'}
 };

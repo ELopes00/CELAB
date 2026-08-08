@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Listas editáveis (Status, TTR, Setores, Técnicos, Modelos…)
+   SAGE-TI — Listas editáveis (Status, TTR, Setores, Técnicos, Modelos…)
    --------------------------------------------------------------------------
    Nenhuma lista de seleção é fixa no código. Tudo o que aparece em um <select>
    vem daqui, é gravado no navegador e pode ser criado, renomeado, reordenado
@@ -14,10 +14,10 @@
        customizações do usuário (merge por rótulo na inicialização).
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var KEY = CELAB.APP.listasKey;
+  var KEY = SAGETI.APP.listasKey;
 
   var listas = null;         // estado em memória
   var ouvintes = [];
@@ -59,7 +59,7 @@
     try {
       window.localStorage.setItem(KEY, JSON.stringify(listas));
     } catch (e) {
-      console.warn('[CELAB] Não foi possível gravar as listas:', e);
+      console.warn('[SAGE-TI] Não foi possível gravar as listas:', e);
     }
   }
 
@@ -78,7 +78,7 @@
    * do sistema trazer status novos sem sobrescrever as listas em uso.
    */
   function mesclarPadroes(atual) {
-    var padrao = CELAB.listasPadrao();
+    var padrao = SAGETI.listasPadrao();
     var novidades = 0;
 
     ['ttrEntrada', 'ttrSaida', 'equipamentos', 'modelos', 'predios', 'setores', 'tecnicos']
@@ -127,7 +127,7 @@
       var novas = mesclarPadroes(listas);
       if (novas) gravar();
     } else {
-      listas = CELAB.listasPadrao();
+      listas = SAGETI.listasPadrao();
       gravar();
     }
     iniciarRealtime();
@@ -146,7 +146,7 @@
       try { canal.postMessage({ tipo: 'listas', evento: det }); } catch (e) { /* ignora */ }
     }
     // Páginas que desenham selects reagem ao store; um sync mantém tudo junto.
-    if (CELAB.store && CELAB.store.notificarListas) CELAB.store.notificarListas(det);
+    if (SAGETI.store && SAGETI.store.notificarListas) SAGETI.store.notificarListas(det);
   }
 
   function assinar(fn) {
@@ -160,7 +160,7 @@
   function iniciarRealtime() {
     if (!('BroadcastChannel' in window)) return;
     try {
-      canal = new BroadcastChannel(CELAB.APP.channel + '-listas');
+      canal = new BroadcastChannel(SAGETI.APP.channel + '-listas');
       canal.onmessage = function () {
         var salvo = ler();
         if (!salvo) return;
@@ -168,8 +168,8 @@
         ouvintes.forEach(function (fn) {
           try { fn({ tipo: 'listas', externo: true }, listas); } catch (e) { console.error(e); }
         });
-        if (CELAB.store && CELAB.store.notificarListas) {
-          CELAB.store.notificarListas({ tipo: 'listas', externo: true });
+        if (SAGETI.store && SAGETI.store.notificarListas) {
+          SAGETI.store.notificarListas({ tipo: 'listas', externo: true });
         }
       };
     } catch (e) { canal = null; }
@@ -256,14 +256,14 @@
   /** Quantos registros usam este valor. */
   function contarUso(nome, valor) {
     var campos = USO[nome];
-    if (!campos || !CELAB.store) return { equipamentos: 0, movimentacoes: 0, total: 0 };
+    if (!campos || !SAGETI.store) return { equipamentos: 0, movimentacoes: 0, total: 0 };
     var k = chave(valor);
 
-    var eqs = CELAB.store.listarEquipamentos().filter(function (e) {
+    var eqs = SAGETI.store.listarEquipamentos().filter(function (e) {
       return campos.eq.some(function (c) { return chave(e[c]) === k; });
     }).length;
 
-    var movs = CELAB.store.listarMovimentacoes().filter(function (m) {
+    var movs = SAGETI.store.listarMovimentacoes().filter(function (m) {
       return campos.mov.some(function (c) { return chave(m[c]) === k; });
     }).length;
 
@@ -273,18 +273,18 @@
   /** Reescreve o valor antigo pelo novo em todos os registros. */
   function reescreverUso(nome, de, para) {
     var campos = USO[nome];
-    if (!campos || !CELAB.store) return 0;
+    if (!campos || !SAGETI.store) return 0;
     var k = chave(de);
     var n = 0;
 
-    CELAB.store.listarEquipamentos().forEach(function (e) {
+    SAGETI.store.listarEquipamentos().forEach(function (e) {
       campos.eq.forEach(function (c) {
-        if (chave(e[c]) === k) { CELAB.store._setCampoEquipamento(e.id, c, para); n++; }
+        if (chave(e[c]) === k) { SAGETI.store._setCampoEquipamento(e.id, c, para); n++; }
       });
     });
-    CELAB.store.listarMovimentacoes().forEach(function (m) {
+    SAGETI.store.listarMovimentacoes().forEach(function (m) {
       campos.mov.forEach(function (c) {
-        if (chave(m[c]) === k) { CELAB.store._setCampoMovimentacao(m.id, c, para); n++; }
+        if (chave(m[c]) === k) { SAGETI.store._setCampoMovimentacao(m.id, c, para); n++; }
       });
     });
     return n;
@@ -536,7 +536,7 @@
 
   function restaurarPadrao(nome) {
     if (!listas) inicializar();
-    var padrao = CELAB.listasPadrao();
+    var padrao = SAGETI.listasPadrao();
 
     if (!nome) {
       listas = padrao;
@@ -556,7 +556,7 @@
   function exportarJSON() {
     if (!listas) inicializar();
     return JSON.stringify({
-      app: CELAB.APP.nome, versao: CELAB.APP.versao,
+      app: SAGETI.APP.nome, versao: SAGETI.APP.versao,
       exportadoEm: new Date().toISOString(), listas: listas
     }, null, 2);
   }
@@ -566,7 +566,7 @@
     try { dados = JSON.parse(texto); } catch (e) { return { ok: false, erro: 'Arquivo JSON inválido.' }; }
     var alvo = dados.listas || dados;
     if (!alvo || (!alvo.status && !alvo.setores)) {
-      return { ok: false, erro: 'O arquivo não contém listas do CELAB.' };
+      return { ok: false, erro: 'O arquivo não contém listas do SAGE-TI.' };
     }
     listas = alvo;
     mesclarPadroes(listas);
@@ -577,12 +577,12 @@
   /** Contagem de itens por lista, para o painel de configurações. */
   function resumo() {
     if (!listas) inicializar();
-    return CELAB.CATALOGO_LISTAS.map(function (c) {
+    return SAGETI.CATALOGO_LISTAS.map(function (c) {
       return { chave: c.chave, rotulo: c.rotulo, tipo: c.tipo, total: (listas[c.chave] || []).length };
     });
   }
 
-  CELAB.listas = {
+  SAGETI.listas = {
     inicializar: inicializar,
     assinar: assinar,
     get: get,
@@ -614,12 +614,12 @@
   };
 
   /* ---------- Compatibilidade -----------------------------------------------
-     Acessos antigos (CELAB.EQUIPAMENTOS, CELAB.statusMeta…) continuam
+     Acessos antigos (SAGETI.EQUIPAMENTOS, SAGETI.statusMeta…) continuam
      funcionando, agora lendo das listas dinâmicas.
      ---------------------------------------------------------------------- */
 
   function definirLeitura(nome, fn) {
-    Object.defineProperty(CELAB, nome, { get: fn, configurable: true });
+    Object.defineProperty(SAGETI, nome, { get: fn, configurable: true });
   }
 
   definirLeitura('EQUIPAMENTOS', function () { return get('equipamentos'); });
@@ -638,10 +638,10 @@
     return (listas && listas.modelosPorEquipamento) || {};
   });
 
-  CELAB.statusMeta = statusMeta;
-  CELAB.modelosDe = modelosDe;
+  SAGETI.statusMeta = statusMeta;
+  SAGETI.modelosDe = modelosDe;
 
-  CELAB.TIPOS_MOV = [
+  SAGETI.TIPOS_MOV = [
     { valor: 'ENTRADA',  rotulo: 'Entrada',   chip: 'entrada' },
     { valor: 'SAIDA',    rotulo: 'Saída',     chip: 'saida' },
     { valor: 'CADASTRO', rotulo: 'Cadastro',  chip: 'ajuste' },
@@ -650,9 +650,9 @@
     { valor: 'IMPORTACAO', rotulo: 'Importação', chip: 'ajuste' }
   ];
 
-  CELAB.tipoMovMeta = function (valor) {
-    return CELAB.TIPOS_MOV.find(function (t) { return t.valor === valor; }) ||
+  SAGETI.tipoMovMeta = function (valor) {
+    return SAGETI.TIPOS_MOV.find(function (t) { return t.valor === valor; }) ||
       { valor: valor, rotulo: valor, chip: 'ajuste' };
   };
 
-})(window.CELAB);
+})(window.SAGETI);

@@ -1,14 +1,14 @@
 /* ==========================================================================
-   CELAB — Aba: Estoque Laboratório
+   SAGE-TI — Aba: Estoque Laboratório
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
 
-  var L = CELAB.listas;
+  var L = SAGETI.listas;
   var POR_PAGINA = 25;
 
   // Estado da view (persiste enquanto a aba está montada)
@@ -22,7 +22,7 @@
   /* ---------- Filtro -------------------------------------------------------- */
 
   function filtrar() {
-    var lista = CELAB.store.listarEquipamentos();
+    var lista = SAGETI.store.listarEquipamentos();
 
     // Presença física vem do campo, não do rótulo do status.
     if (filtros.local === 'lab') {
@@ -87,7 +87,10 @@
       '<div class="filter-bar">' +
         '<div class="field field--grow">' +
           '<label for="f-busca">Buscar</label>' +
-          '<input class="input" type="search" id="f-busca" placeholder="Tombo, modelo, chamado, prédio, setor…">' +
+          '<div class="field__linha">' +
+            '<input class="input" type="search" id="f-busca" placeholder="Tombo, modelo, chamado, prédio, setor…">' +
+            SAGETI.scanner.botaoHTML('f-busca', 'Ler tombo pela câmera') +
+          '</div>' +
         '</div>' +
         '<div class="field">' +
           '<label for="f-local">Localização</label>' +
@@ -210,10 +213,10 @@
         '<td class="col-actions">' +
           '<button class="icon-btn" data-ver="' + U.esc(e.id) + '" title="Ver detalhes" aria-label="Ver detalhes">' +
             UI.icone('olho', 15) + '</button> ' +
-          (CELAB.auth.permissao('podeEditar')
+          (SAGETI.auth.permissao('podeEditar')
             ? '<button class="icon-btn" data-editar="' + U.esc(e.id) + '" title="Editar" aria-label="Editar">' +
               UI.icone('editar', 15) + '</button> ' : '') +
-          (CELAB.auth.permissao('podeExcluir')
+          (SAGETI.auth.permissao('podeExcluir')
             ? '<button class="icon-btn" data-excluir="' + U.esc(e.id) + '" title="Excluir" aria-label="Excluir">' +
               UI.icone('lixeira', 15) + '</button>' : '') +
         '</td>' +
@@ -270,7 +273,7 @@
             '<label for="eq-modelo">Modelo <span class="req">*</span></label>' +
             '<div class="field__linha">' +
               '<select class="select" id="eq-modelo" name="modelo" data-obrigatorio></select>' +
-              (CELAB.auth.permissao('podeGerenciarListas')
+              (SAGETI.auth.permissao('podeGerenciarListas')
                 ? '<button type="button" class="field__gerenciar" data-gerenciar-lista="modelos" ' +
                   'data-alvo-campo="eq-modelo" title="Gerenciar modelos" ' +
                   'aria-label="Gerenciar modelos">' + UI.icone('engrenagem', 15) + '</button>'
@@ -410,8 +413,8 @@
     }
 
     var r = eq
-      ? CELAB.store.atualizarEquipamento(eq.id, dados)
-      : CELAB.store.criarEquipamento(dados);
+      ? SAGETI.store.atualizarEquipamento(eq.id, dados)
+      : SAGETI.store.criarEquipamento(dados);
 
     if (!r.ok) {
       UI.toast('error', 'Não foi possível salvar', r.erro);
@@ -432,7 +435,7 @@
         '</span><span class="result-preview__v">' + (v || '<span class="muted">—</span>') + '</span></div>';
     }
 
-    var historico = CELAB.store.listarMovimentacoes()
+    var historico = SAGETI.store.listarMovimentacoes()
       .filter(function (m) { return m.equipamentoId === eq.id; })
       .slice(0, 8);
 
@@ -501,21 +504,30 @@
       UI.toast('warn', 'Nada a exportar', 'Nenhum equipamento corresponde aos filtros atuais.');
       return;
     }
-    var nome = 'CELAB_Estoque_' + U.carimbo();
+    var nome = SAGETI.APP.nome + '_Estoque_' + U.carimbo();
     if (formato === 'excel') {
-      CELAB.exportar.paraExcel([{
+      var cfgExcel = {
         nome: 'Estoque',
-        tituloRelatorio: 'CELAB — Estoque Laboratório',
+        titulo: SAGETI.APP.nome + ' — Estoque Laboratório',
         registros: lista,
-        colunas: CELAB.exportar.COLS_ESTOQUE,
+        colunas: SAGETI.exportar.COLS_ESTOQUE,
+        colunaStatus: 'status',
         resumo: [['Filtros', rotuloFiltro()], ['Registros', lista.length]]
-      }], nome + '.xlsx');
+      };
+      if (SAGETI.exportar.paraExcelColorido) {
+        SAGETI.exportar.paraExcelColorido(cfgExcel, nome + '.xlsx');
+      } else {
+        SAGETI.exportar.paraExcel([{
+          nome: cfgExcel.nome, tituloRelatorio: cfgExcel.titulo,
+          registros: cfgExcel.registros, colunas: cfgExcel.colunas, resumo: cfgExcel.resumo
+        }], nome + '.xlsx');
+      }
     } else {
-      CELAB.exportar.paraPDF({
+      SAGETI.exportar.paraPDF({
         titulo: 'Estoque Laboratório',
         subtitulo: rotuloFiltro(),
         registros: lista,
-        colunas: CELAB.exportar.COLS_ESTOQUE
+        colunas: SAGETI.exportar.COLS_ESTOQUE
       }, nome + '.pdf');
     }
   }
@@ -524,6 +536,7 @@
 
   function montar(container) {
     container.innerHTML = esqueleto();
+    SAGETI.scanner.ligarBotoes(container);
 
     var CAMPOS_FILTRO = [
       ['#f-local', 'local'], ['#f-status', 'status'], ['#f-equip', 'equipamento'],
@@ -564,7 +577,7 @@
       var alvo;
 
       if ((alvo = e.target.closest('[data-acao="novo"]'))) {
-        if (!CELAB.auth.permissao('podeEditar')) {
+        if (!SAGETI.auth.permissao('podeEditar')) {
           return UI.toast('warn', 'Sem permissão', 'Seu perfil é somente de consulta.');
         }
         return abrirForm(container);
@@ -580,25 +593,25 @@
         return redesenhar();
       }
 
-      if ((alvo = e.target.closest('[data-acao="importar"]'))) return CELAB.importar.abrir();
+      if ((alvo = e.target.closest('[data-acao="importar"]'))) return SAGETI.importar.abrir();
       if ((alvo = e.target.closest('[data-acao="excel"]'))) return exportar('excel');
       if ((alvo = e.target.closest('[data-acao="pdf"]')))   return exportar('pdf');
 
       if ((alvo = e.target.closest('[data-ver]'))) {
-        var eqV = CELAB.store.acharPorId(alvo.getAttribute('data-ver'));
+        var eqV = SAGETI.store.acharPorId(alvo.getAttribute('data-ver'));
         if (eqV) abrirDetalhes(eqV);
         return;
       }
 
       if ((alvo = e.target.closest('[data-editar]'))) {
-        var eqE = CELAB.store.acharPorId(alvo.getAttribute('data-editar'));
+        var eqE = SAGETI.store.acharPorId(alvo.getAttribute('data-editar'));
         if (eqE) abrirForm(container, eqE);
         return;
       }
 
       if ((alvo = e.target.closest('[data-excluir]'))) {
         var id = alvo.getAttribute('data-excluir');
-        var eqX = CELAB.store.acharPorId(id);
+        var eqX = SAGETI.store.acharPorId(id);
         if (!eqX) return;
         UI.confirmar({
           titulo: 'Excluir equipamento',
@@ -608,7 +621,7 @@
           perigo: true
         }).then(function (ok) {
           if (!ok) return;
-          var r = CELAB.store.excluirEquipamento(id);
+          var r = SAGETI.store.excluirEquipamento(id);
           if (r.ok) UI.toast('success', 'Equipamento excluído', 'Registro removido do estoque.');
           else UI.toast('error', 'Falha ao excluir', r.erro);
         });
@@ -666,7 +679,7 @@
     }
 
     // Tempo real: entradas, saídas e mudanças de lista repintam esta tela.
-    var cancelar = CELAB.store.assinar(function (ev) {
+    var cancelar = SAGETI.store.assinar(function (ev) {
       if (ev && ev.tipo === 'listas') return repintarFiltros();
       desenharTabela(container);
     });
@@ -674,11 +687,11 @@
     return { destruir: cancelar };
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.estoque = {
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.estoque = {
     titulo: 'Estoque Laboratório',
     subtitulo: 'Equipamentos sob guarda do laboratório',
     montar: montar
   };
 
-})(window.CELAB);
+})(window.SAGETI);

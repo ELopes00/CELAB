@@ -1,15 +1,15 @@
 /* ==========================================================================
-   CELAB — Exportação para Excel (XLSX) e PDF
+   SAGE-TI — Exportação para Excel (XLSX) e PDF
    --------------------------------------------------------------------------
    SheetJS e jsPDF são carregados por CDN. Se algum não estiver disponível
    (offline), a exportação cai para CSV / janela de impressão em vez de
    simplesmente falhar.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var U = CELAB.util;
+  var U = SAGETI.util;
 
   /* ---------- Definição de colunas ----------------------------------------- */
 
@@ -56,7 +56,7 @@
     return colunas.map(function (c) {
       var v = registro[c.chave];
       if (c.tipo === 'data') return v ? U.dataBR(v) : '';
-      if (c.tipo === 'tipoMov') return CELAB.tipoMovMeta(v).rotulo;
+      if (c.tipo === 'tipoMov') return SAGETI.tipoMovMeta(v).rotulo;
       if (c.tipo === 'sim/nao') return v ? 'Sim' : 'Não';
       return v == null || v === '' ? '' : String(v);
     });
@@ -79,7 +79,7 @@
    */
   function paraExcel(abas, nomeArquivo) {
     if (!temSheetJS()) {
-      CELAB.ui.toast('warn', 'Excel indisponível', 'Biblioteca não carregada (sem internet?). Exportando em CSV.');
+      SAGETI.ui.toast('warn', 'Excel indisponível', 'Biblioteca não carregada (sem internet?). Exportando em CSV.');
       var primeira = abas[0];
       return paraCSV(primeira.registros, primeira.colunas, nomeArquivo.replace(/\.xlsx$/, '.csv'));
     }
@@ -122,7 +122,80 @@
     });
 
     XLSX.writeFile(wb, nomeArquivo);
-    CELAB.ui.toast('success', 'Excel gerado', nomeArquivo);
+    SAGETI.ui.toast('success', 'Excel gerado', nomeArquivo);
+  }
+
+  /* ---------- Excel com cores (ExcelJS) -------------------------------------
+     O SheetJS (community) usado em `paraExcel` não grava estilo de célula —
+     por isso a exportação colorida usa a ExcelJS (carregada por CDN, mesmo
+     esquema das outras bibliotecas: se faltar, cai para `paraExcel` sem cor).
+     A cor de cada célula da coluna de status vem do mesmo mapa usado nos
+     badges da tela (SAGETI.statusCores), então tela e planilha nunca divergem.
+     ---------------------------------------------------------------------- */
+
+  function temExcelJS() { return typeof window.ExcelJS !== 'undefined'; }
+
+  /**
+   * Gera um .xlsx de uma aba só, pintando o fundo da coluna de status.
+   * @param {{nome, titulo, registros, colunas, colunaStatus, resumo?}} cfg
+   *   colunaStatus: chave (em `colunas`) cujo valor é um status do mapa de cores.
+   */
+  function paraExcelColorido(cfg, nomeArquivo) {
+    if (!temExcelJS() || !SAGETI.statusCores) {
+      SAGETI.ui.toast('warn', 'Excel colorido indisponível', 'Biblioteca não carregada — exportando sem cores.');
+      return paraExcel([{
+        nome: cfg.nome, tituloRelatorio: cfg.titulo,
+        registros: cfg.registros, colunas: cfg.colunas, resumo: cfg.resumo
+      }], nomeArquivo);
+    }
+
+    var wb = new window.ExcelJS.Workbook();
+    wb.creator = SAGETI.APP.nome;
+    wb.created = new Date();
+
+    var ws = wb.addWorksheet(cfg.nome.slice(0, 31));
+    ws.columns = cfg.colunas.map(function (c) { return { key: c.chave, width: c.largura || 16 }; });
+
+    if (cfg.titulo) {
+      ws.addRow([cfg.titulo]).font = { bold: true, size: 13 };
+      ws.addRow(['Gerado em ' + U.dataHoraBR(new Date().toISOString()) + ' · ' + cfg.registros.length + ' registro(s)']);
+      ws.addRow([]);
+    }
+    (cfg.resumo || []).forEach(function (par) { ws.addRow([par[0], par[1]]); });
+    if (cfg.resumo && cfg.resumo.length) ws.addRow([]);
+
+    var linhaCabecalho = ws.rowCount + 1;
+    var headerRow = ws.addRow(cfg.colunas.map(function (c) { return c.titulo; }));
+    headerRow.font = { bold: true, color: { argb: 'FF52514E' } };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2EE' } };
+    ws.autoFilter = { from: { row: linhaCabecalho, column: 1 }, to: { row: linhaCabecalho, column: cfg.colunas.length } };
+    ws.views = [{ state: 'frozen', ySplit: linhaCabecalho }];
+
+    var idxStatus = cfg.colunas.findIndex(function (c) { return c.chave === cfg.colunaStatus; });
+
+    cfg.registros.forEach(function (registro) {
+      var linha = linhaDe(registro, cfg.colunas);
+      var row = ws.addRow(linha);
+      if (idxStatus !== -1) {
+        var valorStatus = registro[cfg.colunaStatus];
+        if (valorStatus) {
+          var cor = SAGETI.statusCores.paraExcelFill(valorStatus);
+          var cel = row.getCell(idxStatus + 1);
+          cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cor.fundoARGB } };
+          cel.font = { color: { argb: cor.fonteARGB }, bold: true };
+        }
+      }
+    });
+
+    wb.xlsx.writeBuffer().then(function (buffer) {
+      U.baixarArquivo(
+        new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        nomeArquivo
+      );
+      SAGETI.ui.toast('success', 'Excel gerado', nomeArquivo + ' · coluna de status colorida');
+    }).catch(function (e) {
+      SAGETI.ui.toast('error', 'Falha ao gerar o Excel', e.message);
+    });
   }
 
   /* ---------- CSV (fallback) ------------------------------------------------ */
@@ -137,7 +210,7 @@
     m.linhas.forEach(function (l) { linhas.push(l.map(cel).join(';')); });
     // BOM para o Excel abrir acentuação corretamente.
     U.baixarArquivo('﻿' + linhas.join('\r\n'), nomeArquivo, 'text/csv;charset=utf-8');
-    CELAB.ui.toast('success', 'CSV gerado', nomeArquivo);
+    SAGETI.ui.toast('success', 'CSV gerado', nomeArquivo);
   }
 
   /* ---------- PDF ------------------------------------------------------------ */
@@ -152,7 +225,7 @@
    */
   function paraPDF(cfg, nomeArquivo) {
     if (!temJsPDF()) {
-      CELAB.ui.toast('warn', 'PDF indisponível', 'Biblioteca não carregada. Abrindo a janela de impressão — escolha "Salvar como PDF".');
+      SAGETI.ui.toast('warn', 'PDF indisponível', 'Biblioteca não carregada. Abrindo a janela de impressão — escolha "Salvar como PDF".');
       return imprimirFallback(cfg);
     }
 
@@ -167,11 +240,11 @@
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(15);
-    doc.text('CELAB', 40, 26);
+    doc.text(SAGETI.APP.nome, 40, 26);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8.5);
     doc.setTextColor(190, 196, 204);
-    doc.text('Controle de Estoque de Laboratório', 40, 39);
+    doc.text(SAGETI.APP.descricao, 40, 39, { maxWidth: larguraPag - 240 });
 
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
@@ -232,7 +305,7 @@
           var pag = doc.internal.getNumberOfPages();
           doc.setFontSize(7.5);
           doc.setTextColor(137, 135, 129);
-          doc.text('CELAB · ' + (cfg.titulo || 'Relatório'), 28, doc.internal.pageSize.getHeight() - 16);
+          doc.text(SAGETI.APP.nome + ' · ' + (cfg.titulo || 'Relatório'), 28, doc.internal.pageSize.getHeight() - 16);
           doc.text('Página ' + dados.pageNumber + ' de ' + pag,
             larguraPag - 28, doc.internal.pageSize.getHeight() - 16, { align: 'right' });
         }
@@ -244,7 +317,7 @@
     }
 
     doc.save(nomeArquivo);
-    CELAB.ui.toast('success', 'PDF gerado', nomeArquivo);
+    SAGETI.ui.toast('success', 'PDF gerado', nomeArquivo);
   }
 
   /** Distribui a largura das colunas proporcionalmente ao peso declarado. */
@@ -262,18 +335,18 @@
     var m = matriz(cfg.registros, cfg.colunas);
     var win = window.open('', '_blank');
     if (!win) {
-      CELAB.ui.toast('error', 'Bloqueado', 'O navegador bloqueou a janela. Libere pop-ups para este site.');
+      SAGETI.ui.toast('error', 'Bloqueado', 'O navegador bloqueou a janela. Libere pop-ups para este site.');
       return;
     }
     var html = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
-      '<title>' + U.esc(cfg.titulo || 'Relatório CELAB') + '</title><style>' +
+      '<title>' + U.esc(cfg.titulo || ('Relatório ' + SAGETI.APP.nome)) + '</title><style>' +
       'body{font:11px system-ui,sans-serif;margin:24px;color:#0b0b0b}' +
       'h1{font-size:16px;margin:0}h2{font-size:11px;font-weight:400;color:#52514e;margin:2px 0 16px}' +
       'table{width:100%;border-collapse:collapse;font-size:8.5px}' +
       'th{background:#f2f2ee;text-align:left;padding:5px;border:1px solid #e1e0d9;font-size:8px}' +
       'td{padding:5px;border:1px solid #e1e0d9;vertical-align:top}' +
       '@page{size:A4 landscape;margin:12mm}</style></head><body>' +
-      '<h1>CELAB — ' + U.esc(cfg.titulo || 'Relatório') + '</h1>' +
+      '<h1>' + U.esc(SAGETI.APP.nome) + ' — ' + U.esc(cfg.titulo || 'Relatório') + '</h1>' +
       '<h2>Gerado em ' + U.dataHoraBR(new Date().toISOString()) + ' · ' + m.linhas.length + ' registro(s)</h2>' +
       '<table><thead><tr>' +
       m.cabecalho.map(function (h) { return '<th>' + U.esc(h) + '</th>'; }).join('') +
@@ -292,7 +365,7 @@
   /* Mede pelo TOM de cada status, não pelo rótulo: as listas são editáveis,
      então um status novo criado pelo usuário já entra no resumo certo. */
   function resumoParaExport() {
-    var r = CELAB.store.resumo();
+    var r = SAGETI.store.resumo();
     return [
       ['Total no laboratório', r.totalNoLab],
       ['Disponíveis',         r.porTom.good || 0],
@@ -305,9 +378,9 @@
 
   /** "Exportar Geral": inventário completo + histórico, em um único arquivo. */
   function exportarGeralExcel() {
-    var equipamentos = CELAB.util.ordenarPor(CELAB.store.listarEquipamentos(), 'equipamento');
-    var movs = CELAB.store.listarMovimentacoes();
-    var r = CELAB.store.resumo();
+    var equipamentos = SAGETI.util.ordenarPor(SAGETI.store.listarEquipamentos(), 'equipamento');
+    var movs = SAGETI.store.listarMovimentacoes();
+    var r = SAGETI.store.resumo();
 
     var porTipo = Object.keys(r.porTipo).sort().map(function (k) {
       return { equipamento: k, quantidade: r.porTipo[k] };
@@ -316,23 +389,24 @@
       return { setor: k, quantidade: r.porSetor[k] };
     });
 
+    var marca = SAGETI.APP.nome + ' — ';
     paraExcel([
       {
         nome: 'Inventário',
-        tituloRelatorio: 'CELAB — Inventário Geral',
+        tituloRelatorio: marca + 'Inventário Geral',
         registros: equipamentos,
         colunas: COLS_ESTOQUE,
         resumo: resumoParaExport()
       },
       {
         nome: 'Movimentações',
-        tituloRelatorio: 'CELAB — Histórico de Movimentações',
+        tituloRelatorio: marca + 'Histórico de Movimentações',
         registros: movs,
         colunas: COLS_MOV
       },
       {
         nome: 'Resumo por tipo',
-        tituloRelatorio: 'CELAB — Estoque do laboratório por tipo de equipamento',
+        tituloRelatorio: marca + 'Estoque do laboratório por tipo de equipamento',
         registros: porTipo,
         colunas: [
           { chave: 'equipamento', titulo: 'Equipamento', largura: 28 },
@@ -341,32 +415,33 @@
       },
       {
         nome: 'Resumo por setor',
-        tituloRelatorio: 'CELAB — Estoque do laboratório por setor de origem',
+        tituloRelatorio: marca + 'Estoque do laboratório por setor de origem',
         registros: porSetor,
         colunas: [
           { chave: 'setor',      titulo: 'Setor / Unidade', largura: 46 },
           { chave: 'quantidade', titulo: 'Quantidade',      largura: 14 }
         ]
       }
-    ], 'CELAB_Inventario_Geral_' + U.carimbo() + '.xlsx');
+    ], SAGETI.APP.nome + '_Inventario_Geral_' + U.carimbo() + '.xlsx');
   }
 
   function exportarGeralPDF() {
-    var equipamentos = CELAB.util.ordenarPor(CELAB.store.listarEquipamentos(), 'equipamento');
+    var equipamentos = SAGETI.util.ordenarPor(SAGETI.store.listarEquipamentos(), 'equipamento');
     paraPDF({
       titulo: 'Inventário Geral',
       subtitulo: 'Todos os equipamentos cadastrados no laboratório, incluindo os já disponibilizados.',
       registros: equipamentos,
       colunas: COLS_ESTOQUE,
       resumo: resumoParaExport().slice(0, 5)
-    }, 'CELAB_Inventario_Geral_' + U.carimbo() + '.pdf');
+    }, SAGETI.APP.nome + '_Inventario_Geral_' + U.carimbo() + '.pdf');
   }
 
-  CELAB.exportar = {
+  SAGETI.exportar = {
     COLS_ESTOQUE: COLS_ESTOQUE,
     COLS_MOV: COLS_MOV,
     matriz: matriz,
     paraExcel: paraExcel,
+    paraExcelColorido: paraExcelColorido,
     paraPDF: paraPDF,
     paraCSV: paraCSV,
     exportarGeralExcel: exportarGeralExcel,
@@ -374,4 +449,4 @@
     resumoParaExport: resumoParaExport
   };
 
-})(window.CELAB);
+})(window.SAGETI);

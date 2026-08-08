@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Controle de Estoque de Laboratório
+   SAGE-TI — Sistema de Ativos e Gestão de Estoque de Tecnologia da Informação
    Design system + layout. CSS puro, sem build.
    Paleta de dados: instância de referência validada (light/dark selecionados).
    ========================================================================== */
@@ -769,6 +769,27 @@ a { color: var(--brand); }
 .chip--ajuste .chip__dot  { background: var(--text-muted); }
 
 :root[data-theme="dark"] .chip--saida { background: #2b1a13; color: #f0a37c; }
+
+/* ---- Filtro múltiplo de status (chips liga/desliga) ---------------------- */
+
+.status-filtros {
+  display: flex; flex-wrap: wrap; gap: 7px; align-items: center;
+  padding-bottom: 16px;
+}
+.status-filtro-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 20px;
+  font-size: 12px; font-weight: 550; white-space: nowrap;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+  cursor: pointer; transition: transform .1s ease;
+}
+.status-filtro-chip:hover { transform: translateY(-1px); }
+.status-filtro-chip.is-active { color: #fff; }
+.status-filtro-limpar {
+  border: none; background: transparent; color: var(--text-muted);
+  font-size: 12px; text-decoration: underline; cursor: pointer; padding: 5px 4px;
+}
+.status-filtro-limpar:hover { color: var(--text-primary); }
 
 /* ---- Campo com gerenciador de opções ao lado ---------------------------- */
 

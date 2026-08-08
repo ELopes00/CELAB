@@ -2,12 +2,14 @@
 <html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="utf-8">
-  <title>CELAB — Autoteste</title>
+  <title>SAGE-TI — Autoteste</title>
   <link rel="stylesheet" href="../css/styles.css">
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"></script>
 </head>
 <body>
   <div id="app"></div>
@@ -15,6 +17,8 @@
   <pre id="saida">executando…</pre>
 
   <script src="../js/config.js"></script>
+  <script src="../js/config.properties.js"></script>
+  <script src="../js/status-cores.js"></script>
   <script src="../js/ui.js"></script>
   <script src="../js/listas.js"></script>
   <script src="../js/store.js"></script>
@@ -22,6 +26,7 @@
   <script src="../js/export.js"></script>
   <script src="../js/gerenciador.js"></script>
   <script src="../js/importar.js"></script>
+  <script src="../js/scanner.js"></script>
   <script src="../js/pages/login.js"></script>
   <script src="../js/pages/dashboard.js"></script>
   <script src="../js/pages/estoque.js"></script>
@@ -60,7 +65,7 @@
       }
 
       function rodar() {
-        var C = window.CELAB;
+        var C = window.SAGETI;
         var S = C.store, U = C.util;
 
         var L = C.listas;
@@ -109,7 +114,7 @@
         t('todos os módulos expostos', function () {
           ['util', 'ui', 'listas', 'store', 'auth', 'charts', 'exportar',
            'gerenciador', 'importar', 'app', 'pages'].forEach(function (k) {
-            if (!C[k]) throw new Error('faltando CELAB.' + k);
+            if (!C[k]) throw new Error('faltando SAGETI.' + k);
           });
           ['login', 'dashboard', 'estoque', 'entrada', 'saida', 'relatorios',
            'configuracoes'].forEach(function (k) {
@@ -138,7 +143,7 @@
           return true;
         });
 
-        t('acessos antigos (CELAB.EQUIPAMENTOS…) leem das listas dinâmicas', function () {
+        t('acessos antigos (SAGETI.EQUIPAMENTOS…) leem das listas dinâmicas', function () {
           eq(C.EQUIPAMENTOS.length, L.get('equipamentos').length, 'equipamentos');
           eq(C.SETORES.length, 175, 'setores');
           eq(C.TECNICOS.length, 15, 'técnicos');
@@ -1084,7 +1089,7 @@
         try { rodar(); }
         catch (e) { falhas++; linhas.push('FATAL  ' + e.message + '\n' + e.stack); }
 
-        var cabecalho = '===== CELAB AUTOTESTE =====\n' +
+        var cabecalho = '===== SAGE-TI AUTOTESTE =====\n' +
           'aprovados: ' + ok + '   falhas: ' + falhas + '\n' +
           '===========================\n';
         document.getElementById('saida').textContent =

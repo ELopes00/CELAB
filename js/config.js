@@ -1,9 +1,9 @@
 /* ==========================================================================
-   CELAB — Configuração e listas PADRÃO
+   SAGE-TI — Configuração e listas PADRÃO
    --------------------------------------------------------------------------
    IMPORTANTE: o que está aqui é o *padrão de fábrica*. Em tempo de execução
-   as listas vivem em CELAB.listas (persistidas e editáveis pela interface).
-   Sempre leia via CELAB.listas.get('setores'), nunca deste arquivo.
+   as listas vivem em SAGETI.listas (persistidas e editáveis pela interface).
+   Sempre leia via SAGETI.listas.get('setores'), nunca deste arquivo.
 
    Este arquivo é a fonte para:
      · a primeira carga do sistema;
@@ -11,14 +11,14 @@
      · a incorporação de novas opções de fábrica em bases já existentes.
    ========================================================================== */
 
-window.CELAB = window.CELAB || {};
+window.SAGETI = window.SAGETI || {};
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  CELAB.APP = {
-    nome: 'CELAB',
-    descricao: 'Controle de Estoque de Laboratório',
+  SAGETI.APP = {
+    nome: 'SAGE-TI',
+    descricao: 'Sistema de Ativos e Gestão de Estoque de Tecnologia da Informação',
     versao: '2.0.0',
     storageKey: 'celab.db.v1',
     listasKey: 'celab.listas.v1',
@@ -48,7 +48,7 @@ window.CELAB = window.CELAB || {};
      nunca depende de interpretar o texto do status.
      ====================================================================== */
 
-  CELAB.STATUS_PADRAO = [
+  SAGETI.STATUS_PADRAO = [
     /* --- situações de guarda (aba Estoque) ------------------------------- */
     { valor: 'Estoque',         tom: 'good',     noLab: true,  contextos: ['entrada', 'estoque'], desc: 'Disponível para uso' },
     { valor: 'Manutenção',      tom: 'warning',  noLab: true,  contextos: ['entrada', 'estoque', 'saida'], desc: 'Em reparo' },
@@ -79,11 +79,11 @@ window.CELAB = window.CELAB || {};
      2. TTR — listas próprias por contexto
      ====================================================================== */
 
-  CELAB.TTR_ENTRADA_PADRAO = [
+  SAGETI.TTR_ENTRADA_PADRAO = [
     'Realizada', 'Pendente', 'Retornou', 'Não consta no GRP', 'Garantia'
   ];
 
-  CELAB.TTR_SAIDA_PADRAO = [
+  SAGETI.TTR_SAIDA_PADRAO = [
     'Realizada', 'Pendente', 'Retornou', 'Empréstimo', 'Nao consta no GRP'
   ];
 
@@ -92,7 +92,7 @@ window.CELAB = window.CELAB || {};
      ====================================================================== */
 
   // Array de técnicos
-  CELAB.TECNICOS_PADRAO = [
+  SAGETI.TECNICOS_PADRAO = [
     
     'Keittony Rodrigo',
     'Axl Henrique',
@@ -115,7 +115,7 @@ window.CELAB = window.CELAB || {};
      4. EQUIPAMENTOS
      ====================================================================== */
 
-  CELAB.EQUIPAMENTOS_PADRAO = [
+  SAGETI.EQUIPAMENTOS_PADRAO = [
     'Computador',
     'Eq. Video Conf.',
     'Headset',
@@ -136,7 +136,7 @@ window.CELAB = window.CELAB || {};
      5. MODELOS
      ====================================================================== */
 
-  CELAB.MODELOS_PADRAO = [
+  SAGETI.MODELOS_PADRAO = [
     'Ragtech Easy Way 1200',
     'Lenovo ThinkCentre M75q',
     'Positivo Minipro 810',
@@ -185,7 +185,7 @@ window.CELAB = window.CELAB || {};
   ];
 
   /** Sugestão de categoria por modelo — editável no gerenciador de listas. */
-  CELAB.MODELOS_POR_EQUIPAMENTO_PADRAO = {
+  SAGETI.MODELOS_POR_EQUIPAMENTO_PADRAO = {
     'Computador': [
       'Lenovo ThinkCentre M75q', 'Positivo Minipro 810',
       'Positivo Master 820', 'Positivo Master MiniPro C8400'
@@ -222,7 +222,7 @@ window.CELAB = window.CELAB || {};
      ====================================================================== */
 
   // Array de prédio
-  CELAB.PREDIOS_PADRAO = [
+  SAGETI.PREDIOS_PADRAO = [
     'Sede Administrativa',
     'Forum Civel',
     'Palácio',
@@ -262,7 +262,7 @@ window.CELAB = window.CELAB || {};
      ====================================================================== */
 
   //Array de departamentos
-  CELAB.SETORES_PADRAO = [
+  SAGETI.SETORES_PADRAO = [
     'Setor de Auditoria Interna-SAI',
     '1CIR - 1ª Vara Cível Residual',
     '1CRR - 1ª Vara Cível Residual',
@@ -444,7 +444,7 @@ window.CELAB = window.CELAB || {};
      8. Metadados das listas — dirigem o gerenciador de opções
      ====================================================================== */
 
-  CELAB.TONS = [
+  SAGETI.TONS = [
     { valor: 'good',     rotulo: 'Verde — situação normal' },
     { valor: 'warning',  rotulo: 'Âmbar — atenção' },
     { valor: 'serious',  rotulo: 'Laranja — grave' },
@@ -457,7 +457,7 @@ window.CELAB = window.CELAB || {};
    * Catálogo das listas editáveis. `tipo: 'status'` ganha os campos extra
    * (permanece no laboratório / tom); as demais são listas de texto.
    */
-  CELAB.CATALOGO_LISTAS = [
+  SAGETI.CATALOGO_LISTAS = [
     { chave: 'status',      rotulo: 'Status',              tipo: 'status', icone: 'etiqueta',
       ajuda: 'Situações e motivos de movimentação. "Permanece no laboratório" define se o item conta no estoque.' },
     { chave: 'ttrEntrada',  rotulo: 'TTR — Entrada',       tipo: 'texto',  icone: 'check',
@@ -477,17 +477,17 @@ window.CELAB = window.CELAB || {};
   ];
 
   /** Estado de fábrica completo, usado na primeira carga e no "restaurar". */
-  CELAB.listasPadrao = function () {
+  SAGETI.listasPadrao = function () {
     return {
-      status: CELAB.STATUS_PADRAO.map(function (s) { return Object.assign({}, s, { contextos: s.contextos.slice() }); }),
-      ttrEntrada: CELAB.TTR_ENTRADA_PADRAO.slice(),
-      ttrSaida: CELAB.TTR_SAIDA_PADRAO.slice(),
-      equipamentos: CELAB.EQUIPAMENTOS_PADRAO.slice(),
-      modelos: CELAB.MODELOS_PADRAO.slice(),
-      predios: CELAB.PREDIOS_PADRAO.slice(),
-      setores: CELAB.SETORES_PADRAO.slice(),
-      tecnicos: CELAB.TECNICOS_PADRAO.slice(),
-      modelosPorEquipamento: JSON.parse(JSON.stringify(CELAB.MODELOS_POR_EQUIPAMENTO_PADRAO))
+      status: SAGETI.STATUS_PADRAO.map(function (s) { return Object.assign({}, s, { contextos: s.contextos.slice() }); }),
+      ttrEntrada: SAGETI.TTR_ENTRADA_PADRAO.slice(),
+      ttrSaida: SAGETI.TTR_SAIDA_PADRAO.slice(),
+      equipamentos: SAGETI.EQUIPAMENTOS_PADRAO.slice(),
+      modelos: SAGETI.MODELOS_PADRAO.slice(),
+      predios: SAGETI.PREDIOS_PADRAO.slice(),
+      setores: SAGETI.SETORES_PADRAO.slice(),
+      tecnicos: SAGETI.TECNICOS_PADRAO.slice(),
+      modelosPorEquipamento: JSON.parse(JSON.stringify(SAGETI.MODELOS_POR_EQUIPAMENTO_PADRAO))
     };
   };
 
@@ -495,10 +495,10 @@ window.CELAB = window.CELAB || {};
      9. Perfis de acesso
      ====================================================================== */
 
-  CELAB.PERFIS = {
+  SAGETI.PERFIS = {
     admin:   { rotulo: 'Administrador', podeExcluir: true,  podeEditar: true,  podeGerenciarListas: true, podeImportar: true },
     tecnico: { rotulo: 'Técnico',       podeExcluir: false, podeEditar: true,  podeGerenciarListas: true, podeImportar: true },
     leitura: { rotulo: 'Consulta',      podeExcluir: false, podeEditar: false, podeGerenciarListas: false, podeImportar: false }
   };
 
-})(window.CELAB);
+})(window.SAGETI);

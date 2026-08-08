@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Dashboard com drill-down (cross-filtering)
+   SAGE-TI — Dashboard com drill-down (cross-filtering)
    --------------------------------------------------------------------------
    Um único objeto `filtro` governa a tela inteira. Toda mudança — vinda do
    select de modelo, de um clique numa fatia do donut ou numa barra — recalcula
@@ -8,19 +8,19 @@
    completa da sua dimensão, com a seleção em destaque e o resto recuado.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
-  var L = CELAB.listas;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
+  var L = SAGETI.listas;
 
   var titulo = 'Dashboard';
   var subtitulo = 'Visão geral do estoque em tempo real';
 
   /* ---------- Estado do drill-down ---------------------------------------- */
 
-  var filtro = { modelo: '', tom: '', equipamento: '', predio: '' };
+  var filtro = { modelo: '', tom: '', status: '', equipamento: '', predio: '' };
   // Rótulo exibido -> tom técnico do status. Mantém a UI legível e a regra fiel.
   var TONS_DONUT = [
     { rotulo: 'Disponível',   tom: 'good' },
@@ -41,11 +41,11 @@
   }
 
   function temFiltro() {
-    return !!(filtro.modelo || filtro.tom || filtro.equipamento || filtro.predio);
+    return !!(filtro.modelo || filtro.tom || filtro.status || filtro.equipamento || filtro.predio);
   }
 
   function limparFiltros() {
-    filtro = { modelo: '', tom: '', equipamento: '', predio: '' };
+    filtro = { modelo: '', tom: '', status: '', equipamento: '', predio: '' };
   }
 
   /* ---------- Recorte ------------------------------------------------------
@@ -54,13 +54,14 @@
      ---------------------------------------------------------------------- */
 
   function recorte(exceto) {
-    return CELAB.store.estoqueLaboratorio().filter(function (e) {
+    return SAGETI.store.estoqueLaboratorio().filter(function (e) {
       if (filtro.modelo && exceto !== 'modelo' && e.modelo !== filtro.modelo) return false;
       if (filtro.equipamento && exceto !== 'equipamento' && e.equipamento !== filtro.equipamento) return false;
       if (filtro.predio && exceto !== 'predio' && e.predioOrigem !== filtro.predio) return false;
       if (filtro.tom && exceto !== 'tom') {
         if ((L.statusMeta(e.status).tom || 'neutral') !== filtro.tom) return false;
       }
+      if (filtro.status && exceto !== 'status' && e.status !== filtro.status) return false;
       return true;
     });
   }
@@ -126,6 +127,11 @@
             UI.opcoes(TONS_DONUT.map(function (t) {
               return { valor: t.tom, rotulo: t.rotulo };
             }), '', 'Todas') + '</select>' +
+        '</div>' +
+        '<div class="field">' +
+          '<label for="dash-status">Status</label>' +
+          '<select class="select" id="dash-status">' +
+            UI.opcoes(L.statusTodos(), '', 'Todos os status') + '</select>' +
         '</div>' +
         '<div style="flex:1 1 100%;min-width:0" id="dash-chips"></div>' +
       '</div>' +
@@ -208,6 +214,7 @@
     if (filtro.modelo) chip('modelo', 'Modelo', filtro.modelo);
     if (filtro.equipamento) chip('equipamento', 'Equipamento', filtro.equipamento);
     if (filtro.tom) chip('tom', 'Situação', rotuloDoTom(filtro.tom));
+    if (filtro.status) chip('status', 'Status', filtro.status);
     if (filtro.predio) chip('predio', 'Prédio', filtro.predio);
 
     return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:2px">' +
@@ -229,11 +236,11 @@
         '</div>';
     }
 
-    var totalGeral = CELAB.store.estoqueLaboratorio().length;
+    var totalGeral = SAGETI.store.estoqueLaboratorio().length;
     var rodapeHero = temFiltro()
       ? 'de ' + U.numero(totalGeral) + ' no laboratório · recorte filtrado'
-      : U.numero(CELAB.store.resumo().totalCadastrado) + ' cadastrados · ' +
-        U.numero(CELAB.store.resumo().totalFora) + ' fora do laboratório';
+      : U.numero(SAGETI.store.resumo().totalCadastrado) + ' cadastrados · ' +
+        U.numero(SAGETI.store.resumo().totalFora) + ' fora do laboratório';
 
     return '' +
       tile('stat--brand', temFiltro() ? 'Equipamentos no recorte' : 'Equipamentos no laboratório',
@@ -247,7 +254,7 @@
   /* ---------- Render -------------------------------------------------------- */
 
   function desenhar(container) {
-    var p = CELAB.charts.paleta();
+    var p = SAGETI.charts.paleta();
     var todasCategorias = L.get('equipamentos');
 
     // Recorte principal (todos os filtros) e recortes por dimensão.
@@ -265,7 +272,7 @@
 
     /* --- 1. Estoque por tipo (clicável) --- */
     var dadosTipo = agrupar(listaTipo, 'equipamento');
-    CELAB.charts.barrasPorTipo('grafico-tipo', dadosTipo, {
+    SAGETI.charts.barrasPorTipo('grafico-tipo', dadosTipo, {
       todasCategorias: todasCategorias,   // mostra as 14, inclusive as zeradas
       selecionado: filtro.equipamento,
       aoClicar: function (categoria) {
@@ -297,7 +304,7 @@
       };
     }).filter(function (f) { return f.valor > 0; });
 
-    CELAB.charts.donutStatus('grafico-status', fatias, {
+    SAGETI.charts.donutStatus('grafico-status', fatias, {
       selecionado: rotuloDoTom(filtro.tom),
       rotuloCentro: temFiltro() ? 'no recorte' : 'no laboratório',
       aoClicar: function (rotulo) {
@@ -307,7 +314,7 @@
         desenhar(container);
       }
     });
-    container.querySelector('#legenda-status').innerHTML = CELAB.charts.legendaHTML(fatias);
+    container.querySelector('#legenda-status').innerHTML = SAGETI.charts.legendaHTML(fatias);
 
     // A tabela-gêmea detalha status por status — nada fica só no agrupamento.
     var porStatus = agrupar(listaStatus, 'status');
@@ -322,8 +329,8 @@
 
     /* --- 3. Movimentações (segue o filtro de modelo/equipamento) --- */
     var serie = serieFiltrada(30);
-    CELAB.charts.linhasMovimentacao('grafico-mov', serie);
-    container.querySelector('#legenda-mov').innerHTML = CELAB.charts.legendaHTML([
+    SAGETI.charts.linhasMovimentacao('grafico-mov', serie);
+    container.querySelector('#legenda-mov').innerHTML = SAGETI.charts.legendaHTML([
       { rotulo: 'Entradas', cor: p.series[0],
         valor: serie.entradas.reduce(function (a, b) { return a + b; }, 0) },
       { rotulo: 'Saídas', cor: p.series[1],
@@ -336,7 +343,7 @@
 
     /* --- 4. Prédios (clicável) --- */
     var dadosPredio = agrupar(listaPredio, 'predioOrigem');
-    CELAB.charts.barrasPorPredio('grafico-predio', dadosPredio, 8, {
+    SAGETI.charts.barrasPorPredio('grafico-predio', dadosPredio, 8, {
       selecionado: filtro.predio,
       aoClicar: function (predio) {
         filtro.predio = (predio && predio !== filtro.predio) ? predio : '';
@@ -352,7 +359,7 @@
 
   /** Série de movimentações respeitando modelo e equipamento do filtro. */
   function serieFiltrada(dias) {
-    if (!filtro.modelo && !filtro.equipamento) return CELAB.store.serieMovimentacoes(dias);
+    if (!filtro.modelo && !filtro.equipamento) return SAGETI.store.serieMovimentacoes(dias);
 
     var hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
@@ -362,7 +369,7 @@
       labels.push(iso);
       mapa[iso] = { entradas: 0, saidas: 0 };
     }
-    CELAB.store.listarMovimentacoes().forEach(function (m) {
+    SAGETI.store.listarMovimentacoes().forEach(function (m) {
       if (filtro.modelo && m.modelo !== filtro.modelo) return;
       if (filtro.equipamento && m.equipamento !== filtro.equipamento) return;
       var k = (m.data || '').slice(0, 10);
@@ -381,7 +388,7 @@
     var alvo = container.querySelector('[data-vista-alvo="tabela"][data-chave="' + chave + '"]');
     if (!alvo) return;
     alvo.innerHTML = linhas.length
-      ? CELAB.charts.tabelaHTML(colunas, linhas)
+      ? SAGETI.charts.tabelaHTML(colunas, linhas)
       : '<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">Sem dados.</div>';
   }
 
@@ -390,9 +397,11 @@
     var m = container.querySelector('#dash-modelo');
     var e = container.querySelector('#dash-equip');
     var t = container.querySelector('#dash-tom');
+    var s = container.querySelector('#dash-status');
     if (m) m.value = filtro.modelo;
     if (e) e.value = filtro.equipamento;
     if (t) t.value = filtro.tom;
+    if (s) s.value = filtro.status;
   }
 
   /* ---------- Montagem ------------------------------------------------------ */
@@ -401,7 +410,10 @@
     container.innerHTML = esqueleto();
     sincronizarCampos(container);
 
-    var CAMPOS = [['#dash-modelo', 'modelo'], ['#dash-equip', 'equipamento'], ['#dash-tom', 'tom']];
+    var CAMPOS = [
+      ['#dash-modelo', 'modelo'], ['#dash-equip', 'equipamento'],
+      ['#dash-tom', 'tom'], ['#dash-status', 'status']
+    ];
 
     CAMPOS.forEach(function (par) {
       var el = container.querySelector(par[0]);
@@ -430,8 +442,8 @@
       if ((alvo = e.target.closest('[data-ir]'))) return navegar(alvo.getAttribute('data-ir'));
 
       if ((alvo = e.target.closest('[data-exportar]'))) {
-        if (alvo.getAttribute('data-exportar') === 'excel') CELAB.exportar.exportarGeralExcel();
-        else CELAB.exportar.exportarGeralPDF();
+        if (alvo.getAttribute('data-exportar') === 'excel') SAGETI.exportar.exportarGeralExcel();
+        else SAGETI.exportar.exportarGeralPDF();
         return;
       }
 
@@ -464,15 +476,17 @@
     function repintarListas() {
       UI.repintarSelect(container.querySelector('#dash-modelo'), L.get('modelos'), 'Todos os modelos');
       UI.repintarSelect(container.querySelector('#dash-equip'), L.get('equipamentos'), 'Todos');
+      UI.repintarSelect(container.querySelector('#dash-status'), L.statusTodos(), 'Todos os status');
       // Um modelo excluído deixa de existir: o filtro correspondente cai.
       if (filtro.modelo && L.get('modelos').indexOf(filtro.modelo) === -1) filtro.modelo = '';
       if (filtro.equipamento && L.get('equipamentos').indexOf(filtro.equipamento) === -1) filtro.equipamento = '';
+      if (filtro.status && L.statusTodos().indexOf(filtro.status) === -1) filtro.status = '';
       sincronizarCampos(container);
       desenhar(container);
     }
 
     // Tempo real: qualquer mutação repinta a dashboard mantendo o recorte.
-    var cancelar = CELAB.store.assinar(function (ev) {
+    var cancelar = SAGETI.store.assinar(function (ev) {
       if (ev && ev.tipo === 'listas') return repintarListas();
       desenhar(container);
     });
@@ -481,13 +495,13 @@
       destruir: function () {
         cancelar();
         document.removeEventListener('keydown', aoTeclar);
-        CELAB.charts.destruirTodos();
+        SAGETI.charts.destruirTodos();
       }
     };
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.dashboard = {
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.dashboard = {
     titulo: titulo,
     subtitulo: subtitulo,
     montar: montar,
@@ -497,4 +511,4 @@
     _limpar: limparFiltros
   };
 
-})(window.CELAB);
+})(window.SAGETI);

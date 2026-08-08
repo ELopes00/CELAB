@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Aba: Saída de Equipamentos
+   SAGE-TI — Aba: Saída de Equipamentos
    --------------------------------------------------------------------------
    Salvar aqui retira o item do estoque físico: `noLaboratorio` vira false e o
    destino é preenchido. O registro não é apagado, para preservar a
@@ -7,12 +7,12 @@
    laboratório") e dos indicadores da Dashboard no mesmo instante.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
-  var L = CELAB.listas;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
+  var L = SAGETI.listas;
 
   function esqueleto() {
     return '' +
@@ -54,17 +54,23 @@
 
               '<div class="field">' +
                 '<label for="sa-tombo-novo">Tombo Novo</label>' +
-                '<input class="input" type="text" id="sa-tombo-novo" name="tomboNovo" ' +
-                  'inputmode="numeric" placeholder="Digite para localizar…" ' +
-                  'list="lista-tombos" autocomplete="off">' +
+                '<div class="field__linha">' +
+                  '<input class="input" type="text" id="sa-tombo-novo" name="tomboNovo" ' +
+                    'inputmode="numeric" placeholder="Digite para localizar…" ' +
+                    'list="lista-tombos" autocomplete="off">' +
+                  SAGETI.scanner.botaoHTML('sa-tombo-novo', 'Ler tombo pela câmera') +
+                '</div>' +
                 '<datalist id="lista-tombos"></datalist>' +
                 '<span class="field__error">Informe o tombo novo ou o antigo.</span>' +
               '</div>' +
 
               '<div class="field">' +
                 '<label for="sa-tombo-antigo">Tombo Antigo</label>' +
-                '<input class="input" type="text" id="sa-tombo-antigo" name="tomboAntigo" ' +
-                  'inputmode="numeric" placeholder="Ex.: 11233" autocomplete="off">' +
+                '<div class="field__linha">' +
+                  '<input class="input" type="text" id="sa-tombo-antigo" name="tomboAntigo" ' +
+                    'inputmode="numeric" placeholder="Ex.: 11233" autocomplete="off">' +
+                  SAGETI.scanner.botaoHTML('sa-tombo-antigo', 'Ler tombo pela câmera') +
+                '</div>' +
               '</div>' +
 
               '<div class="field field--full" id="sa-achado-wrap" style="display:none">' +
@@ -84,7 +90,7 @@
                 '<label for="sa-modelo">Modelo <span class="req">*</span></label>' +
                 '<div class="field__linha">' +
                   '<select class="select" id="sa-modelo" name="modelo" data-obrigatorio></select>' +
-                  (CELAB.auth.permissao('podeGerenciarListas')
+                  (SAGETI.auth.permissao('podeGerenciarListas')
                     ? '<button type="button" class="field__gerenciar" data-gerenciar-lista="modelos" ' +
                       'data-alvo-campo="sa-modelo" title="Gerenciar modelos" ' +
                       'aria-label="Gerenciar modelos">' + UI.icone('engrenagem', 15) + '</button>'
@@ -161,7 +167,7 @@
         '<div class="card__head">' +
           '<div>' +
             '<div class="card__title">Últimas saídas registradas</div>' +
-            '<div class="card__sub">20 lançamentos mais recentes</div>' +
+            '<div class="card__sub" id="saida-recentes-sub">20 lançamentos mais recentes</div>' +
           '</div>' +
           '<div class="card__spacer"></div>' +
           '<button class="btn btn--outline btn--sm" data-acao="excel">' +
@@ -169,24 +175,71 @@
           '<button class="btn btn--outline btn--sm" data-acao="pdf">' +
             UI.icone('pdf', 14) + '<span>PDF</span></button>' +
         '</div>' +
+        '<div class="card__body" style="padding-bottom:0">' +
+          '<div class="status-filtros" id="sa-filtro-status" role="group" aria-label="Filtrar por status de saída"></div>' +
+        '</div>' +
         '<div class="card__body card__body--flush">' +
           '<div class="table-wrap" id="saida-recentes"></div>' +
         '</div>' +
       '</div>';
   }
 
+  /** Chip clicável (liga/desliga) na cor do próprio status — filtro múltiplo. */
+  function chipFiltroStatus(status, ativo) {
+    var estilo = SAGETI.statusCores ? SAGETI.statusCores.estiloBadge(status) : null;
+    var style = estilo
+      ? 'style="' +
+        (ativo
+          ? 'background:' + estilo.dot + ';border-color:' + estilo.dot + ';color:#fff"'
+          : 'background:' + estilo.background + ';border-color:' + estilo.borderColor + '"')
+      : '';
+    return '<button type="button" class="status-filtro-chip' + (ativo ? ' is-active' : '') + '" ' +
+      style + ' data-status="' + U.esc(status) + '" aria-pressed="' + (ativo ? 'true' : 'false') + '">' +
+      (estilo ? '<span class="chip__dot" style="background:' + (ativo ? '#fff' : estilo.dot) + '"></span>' : '') +
+      U.esc(status) + '</button>';
+  }
+
+  var filtroStatus = []; // status de saída marcados no filtro múltiplo; [] = todos
+
   function saidas() {
-    return CELAB.store.listarMovimentacoes().filter(function (m) { return m.tipo === 'SAIDA'; });
+    return SAGETI.store.listarMovimentacoes().filter(function (m) { return m.tipo === 'SAIDA'; });
+  }
+
+  /** Aplica o filtro múltiplo de status (chips) sobre as saídas. */
+  function saidasFiltradas() {
+    var lista = saidas();
+    if (!filtroStatus.length) return lista;
+    return lista.filter(function (m) { return filtroStatus.indexOf(m.statusResultante) !== -1; });
+  }
+
+  function desenharFiltroStatus(container) {
+    var alvo = container.querySelector('#sa-filtro-status');
+    if (!alvo) return;
+    var opcoes = L.statusDe('saida');
+    alvo.innerHTML = opcoes.map(function (s) {
+      return chipFiltroStatus(s, filtroStatus.indexOf(s) !== -1);
+    }).join('') + (filtroStatus.length
+      ? '<button type="button" class="status-filtro-limpar" data-limpar-status>Limpar filtro</button>'
+      : '');
   }
 
   function desenharRecentes(container) {
-    var lista = saidas().slice(0, 20);
+    var todasFiltradas = saidasFiltradas();
+    var lista = todasFiltradas.slice(0, 20);
     var alvo = container.querySelector('#saida-recentes');
+    var sub = container.querySelector('#saida-recentes-sub');
+    if (sub) {
+      sub.textContent = filtroStatus.length
+        ? todasFiltradas.length + ' resultado(s) para o filtro · mostrando até 20'
+        : '20 lançamentos mais recentes';
+    }
     if (!alvo) return;
 
     if (!lista.length) {
-      alvo.innerHTML = UI.estadoVazio('Nenhuma saída registrada',
-        'O primeiro lançamento aparece aqui automaticamente.');
+      alvo.innerHTML = UI.estadoVazio(
+        filtroStatus.length ? 'Nenhuma saída para este filtro' : 'Nenhuma saída registrada',
+        filtroStatus.length ? 'Ajuste ou limpe os status selecionados acima.'
+          : 'O primeiro lançamento aparece aqui automaticamente.');
       return;
     }
 
@@ -221,7 +274,7 @@
   function atualizarSugestoes(container) {
     var dl = container.querySelector('#lista-tombos');
     if (!dl) return;
-    dl.innerHTML = CELAB.store.estoqueLaboratorio().map(function (e) {
+    dl.innerHTML = SAGETI.store.estoqueLaboratorio().map(function (e) {
       var t = e.tomboNovo || e.tomboAntigo;
       if (!t) return '';
       return '<option value="' + U.esc(t) + '">' +
@@ -243,6 +296,7 @@
     var achado = container.querySelector('#sa-achado');
 
     var repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
+    SAGETI.scanner.ligarBotoes(container);
 
     function mostrarDescStatus() {
       descStatus.textContent = L.statusMeta(selStatus.value).desc || '';
@@ -252,7 +306,7 @@
 
     /* Localiza o equipamento pelo tombo e preenche o restante do formulário. */
     function localizar() {
-      var eq = CELAB.store.acharPorTombo({
+      var eq = SAGETI.store.acharPorTombo({
         tomboNovo: tomboNovo.value, tomboAntigo: tomboAntigo.value
       });
       if (!eq) { achadoWrap.style.display = 'none'; return null; }
@@ -295,7 +349,7 @@
     form.addEventListener('submit', function (e) {
       e.preventDefault();
 
-      if (!CELAB.auth.permissao('podeEditar')) {
+      if (!SAGETI.auth.permissao('podeEditar')) {
         return UI.toast('warn', 'Sem permissão', 'Seu perfil é somente de consulta.');
       }
       if (!UI.validarForm(form)) {
@@ -309,7 +363,7 @@
         return UI.toast('warn', 'Tombo obrigatório', 'Informe ao menos um número de tombo.');
       }
 
-      var r = CELAB.store.registrarSaida(dados);
+      var r = SAGETI.store.registrarSaida(dados);
       if (!r.ok) {
         UI.marcarErro(tomboNovo, 'Equipamento não disponível para saída.');
         return UI.toast('error', 'Saída não registrada', r.erro);
@@ -339,22 +393,48 @@
     });
 
     container.addEventListener('click', function (e) {
+      var chipStatus = e.target.closest('[data-status]');
+      if (chipStatus) {
+        var s = chipStatus.getAttribute('data-status');
+        var i = filtroStatus.indexOf(s);
+        if (i === -1) filtroStatus.push(s); else filtroStatus.splice(i, 1);
+        desenharFiltroStatus(container);
+        desenharRecentes(container);
+        return;
+      }
+      if (e.target.closest('[data-limpar-status]')) {
+        filtroStatus = [];
+        desenharFiltroStatus(container);
+        desenharRecentes(container);
+        return;
+      }
+
       var acao = e.target.closest('[data-acao]');
       if (!acao) return;
-      var lista = saidas();
-      if (!lista.length) return UI.toast('warn', 'Nada a exportar', 'Nenhuma saída registrada.');
+      var lista = saidasFiltradas();
+      if (!lista.length) return UI.toast('warn', 'Nada a exportar', 'Nenhuma saída corresponde ao filtro atual.');
 
       if (acao.getAttribute('data-acao') === 'excel') {
-        CELAB.exportar.paraExcel([{
-          nome: 'Saídas', tituloRelatorio: 'CELAB — Saídas de Equipamentos',
-          registros: lista, colunas: CELAB.exportar.COLS_MOV
-        }], 'CELAB_Saidas_' + U.carimbo() + '.xlsx');
+        var nomeArq = SAGETI.APP.nome + '_Saidas_' + U.carimbo() + '.xlsx';
+        if (SAGETI.exportar.paraExcelColorido) {
+          SAGETI.exportar.paraExcelColorido({
+            nome: 'Saídas', titulo: SAGETI.APP.nome + ' — Saídas de Equipamentos',
+            registros: lista, colunas: SAGETI.exportar.COLS_MOV, colunaStatus: 'statusResultante'
+          }, nomeArq);
+        } else {
+          SAGETI.exportar.paraExcel([{
+            nome: 'Saídas', tituloRelatorio: SAGETI.APP.nome + ' — Saídas de Equipamentos',
+            registros: lista, colunas: SAGETI.exportar.COLS_MOV
+          }], nomeArq);
+        }
       } else {
-        CELAB.exportar.paraPDF({
+        SAGETI.exportar.paraPDF({
           titulo: 'Saídas de Equipamentos',
-          subtitulo: 'Todas as saídas registradas do laboratório',
-          registros: lista, colunas: CELAB.exportar.COLS_MOV
-        }, 'CELAB_Saidas_' + U.carimbo() + '.pdf');
+          subtitulo: filtroStatus.length
+            ? 'Status filtrados: ' + filtroStatus.join(', ')
+            : 'Todas as saídas registradas do laboratório',
+          registros: lista, colunas: SAGETI.exportar.COLS_MOV
+        }, SAGETI.APP.nome + '_Saidas_' + U.carimbo() + '.pdf');
       }
     });
 
@@ -369,11 +449,12 @@
       mostrarDescStatus();
     }
 
+    desenharFiltroStatus(container);
     desenharRecentes(container);
     atualizarSugestoes(container);
 
-    var cancelar = CELAB.store.assinar(function (ev) {
-      if (ev && ev.tipo === 'listas') return repintarListas();
+    var cancelar = SAGETI.store.assinar(function (ev) {
+      if (ev && ev.tipo === 'listas') { repintarListas(); desenharFiltroStatus(container); return; }
       desenharRecentes(container);
       atualizarSugestoes(container);
     });
@@ -381,11 +462,11 @@
     return { destruir: cancelar };
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.saida = {
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.saida = {
     titulo: 'Saída de Equipamentos',
     subtitulo: 'Envio de itens para as unidades',
     montar: montar
   };
 
-})(window.CELAB);
+})(window.SAGETI);

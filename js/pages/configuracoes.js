@@ -1,17 +1,17 @@
 /* ==========================================================================
-   CELAB — Aba: Configurações
+   SAGE-TI — Aba: Configurações
    --------------------------------------------------------------------------
    Painel completo das listas do sistema, importação de planilha e backup.
    O mesmo editor aparece em modal pelo botão ⚙ ao lado de cada campo — aqui
    ele ganha a visão geral, com a contagem de opções de cada lista.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
-  var L = CELAB.listas;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
+  var L = SAGETI.listas;
 
   var listaAtiva = 'status';
   var filtroAtivo = '';
@@ -94,7 +94,7 @@
     var nav = container.querySelector('#listas-nav');
     if (!nav) return;
     nav.innerHTML = L.resumo().map(function (r) {
-      var meta = CELAB.gerenciador.catalogo(r.chave);
+      var meta = SAGETI.gerenciador.catalogo(r.chave);
       return '<button type="button" data-lista="' + r.chave + '"' +
         (r.chave === listaAtiva ? ' class="is-active" aria-current="true"' : '') + '>' +
         UI.icone(meta.icone || 'listas', 16) +
@@ -106,8 +106,8 @@
   function desenharPainel(container) {
     var painel = container.querySelector('#listas-painel');
     if (!painel) return;
-    painel.innerHTML = CELAB.gerenciador.painelHTML(listaAtiva, filtroAtivo);
-    CELAB.gerenciador.ligar(painel, listaAtiva, function (filtro) {
+    painel.innerHTML = SAGETI.gerenciador.painelHTML(listaAtiva, filtroAtivo);
+    SAGETI.gerenciador.ligar(painel, listaAtiva, function (filtro) {
       if (filtro !== undefined) filtroAtivo = filtro;
       desenharNav(container);
       desenharPainel(container);
@@ -117,7 +117,7 @@
   }
 
   function montar(container, navegar) {
-    if (!CELAB.auth.permissao('podeGerenciarListas')) {
+    if (!SAGETI.auth.permissao('podeGerenciarListas')) {
       container.innerHTML = '<div class="card"><div class="card__body">' +
         UI.estadoVazio('Acesso restrito',
           'Seu perfil é somente de consulta e não pode alterar as configurações do sistema.') +
@@ -147,20 +147,20 @@
 
       switch (alvo.getAttribute('data-acao')) {
         case 'importar':
-          return CELAB.importar.abrir();
+          return SAGETI.importar.abrir();
 
         case 'modelo':
-          return CELAB.importar.baixarModelo();
+          return SAGETI.importar.baixarModelo();
 
         case 'backup':
-          U.baixarArquivo(CELAB.store.exportarJSON(),
-            'CELAB_backup_' + U.carimbo() + '.json', 'application/json');
+          U.baixarArquivo(SAGETI.store.exportarJSON(),
+            SAGETI.APP.nome + '_backup_' + U.carimbo() + '.json', 'application/json');
           return UI.toast('success', 'Backup gerado',
             'Inclui equipamentos, histórico e todas as listas.');
 
         case 'exportar-listas':
           U.baixarArquivo(L.exportarJSON(),
-            'CELAB_listas_' + U.carimbo() + '.json', 'application/json');
+            SAGETI.APP.nome + '_listas_' + U.carimbo() + '.json', 'application/json');
           return UI.toast('success', 'Listas exportadas',
             'Use este arquivo para replicar as listas em outra máquina.');
 
@@ -189,7 +189,7 @@
             confirmar: 'Apagar tudo', perigo: true
           }).then(function (ok) {
             if (!ok) return;
-            CELAB.store.limparTudo();
+            SAGETI.store.limparTudo();
             UI.toast('success', 'Dados apagados', 'O sistema voltou ao estado inicial.');
             desenharPainel(container);
           });
@@ -212,7 +212,7 @@
     });
 
     // A contagem de uso muda quando registros mudam: mantém o painel fiel.
-    var cancelar = CELAB.store.assinar(function () {
+    var cancelar = SAGETI.store.assinar(function () {
       desenharNav(container);
       desenharPainel(container);
     });
@@ -220,11 +220,11 @@
     return { destruir: cancelar };
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.configuracoes = {
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.configuracoes = {
     titulo: 'Configurações',
     subtitulo: 'Listas, importação e backup',
     montar: montar
   };
 
-})(window.CELAB);
+})(window.SAGETI);

@@ -1,8 +1,8 @@
 /* ==========================================================================
-   CELAB — Utilitários, ícones e componentes de interface
+   SAGE-TI — Utilitários, ícones e componentes de interface
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
   /* ---------- Util ---------------------------------------------------------- */
@@ -92,7 +92,7 @@
     });
   };
 
-  CELAB.util = util;
+  SAGETI.util = util;
 
   /* ---------- Ícones (Lucide, inline) --------------------------------------- */
 
@@ -136,7 +136,9 @@
     listas:    '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
     voltar:    '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     salvar:    '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
-    restaurar: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'
+    restaurar: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    camera:    '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/>',
+    barcode:   '<path d="M3 5v14"/><path d="M7 5v14"/><path d="M11 5v14"/><path d="M14 5v14"/><path d="M18 5v14"/><path d="M21 5v14"/>'
   };
 
   /** Devolve o markup SVG de um ícone. */
@@ -300,7 +302,7 @@
     if (v) {
       var existe = l.some(function (item) {
         var alvo = typeof item === 'string' ? item : item.valor;
-        return CELAB.listas._chave(alvo) === CELAB.listas._chave(v);
+        return SAGETI.listas._chave(alvo) === SAGETI.listas._chave(v);
       });
       if (!existe) l.push({ valor: v, rotulo: v + '  (fora da lista atual)' });
     }
@@ -316,8 +318,8 @@
    *          opcoesLista, semGerenciar}} cfg
    */
   function selectGerenciavel(cfg) {
-    var lista = cfg.opcoesLista || CELAB.listas.get(cfg.lista);
-    var podeGerenciar = !cfg.semGerenciar && CELAB.auth.permissao('podeGerenciarListas');
+    var lista = cfg.opcoesLista || SAGETI.listas.get(cfg.lista);
+    var podeGerenciar = !cfg.semGerenciar && SAGETI.auth.permissao('podeGerenciarListas');
 
     var html = '<div class="field__linha">' +
       '<select class="select" id="' + cfg.id + '" name="' + (cfg.name || cfg.id) + '"' +
@@ -358,7 +360,7 @@
     function repintar(preservar) {
       var cat = selEquip.value;
       var atual = preservar ? selModelo.value : '';
-      var grupos = CELAB.listas.modelosDe(cat);
+      var grupos = SAGETI.listas.modelosDe(cat);
       var html = '<option value="">Selecione…</option>';
 
       if (cat && grupos.sugeridos.length) {
@@ -372,7 +374,7 @@
         });
         html += '</optgroup>';
       } else {
-        CELAB.listas.get('modelos').forEach(function (m) {
+        SAGETI.listas.get('modelos').forEach(function (m) {
           html += '<option value="' + util.esc(m) + '">' + util.esc(m) + '</option>';
         });
       }
@@ -401,17 +403,27 @@
     return repintar;
   }
 
-  /** Chip de status pronto (cor + rótulo — nunca só a cor). */
+  /**
+   * Chip de status pronto (cor + rótulo — nunca só a cor).
+   * A cor de fundo/ponto vem do mapa fino por status (SAGETI.statusCores,
+   * uma cor por rótulo); a classe chip--tom-* fica só como retaguarda,
+   * para status fora do mapa antes do statusCores.js terminar de carregar.
+   */
   function chipStatus(status) {
     if (!status || status === '—') return '<span class="muted">—</span>';
-    var meta = CELAB.listas.statusMeta(status);
-    return '<span class="chip chip--tom-' + (meta.tom || 'neutral') + '"' +
+    var meta = SAGETI.listas.statusMeta(status);
+    var estilo = SAGETI.statusCores ? SAGETI.statusCores.estiloBadge(status) : null;
+    var style = estilo
+      ? ' style="background:' + estilo.background + ';border-color:' + estilo.borderColor + '"'
+      : '';
+    var dotStyle = estilo ? ' style="background:' + estilo.dot + '"' : '';
+    return '<span class="chip chip--tom-' + (meta.tom || 'neutral') + '"' + style +
       (meta.desc ? ' title="' + util.esc(meta.desc) + '"' : '') + '>' +
-      '<span class="chip__dot"></span>' + util.esc(meta.valor) + '</span>';
+      '<span class="chip__dot"' + dotStyle + '></span>' + util.esc(meta.valor) + '</span>';
   }
 
   function chipTipoMov(tipo) {
-    var meta = CELAB.tipoMovMeta(tipo);
+    var meta = SAGETI.tipoMovMeta(tipo);
     return '<span class="chip chip--' + meta.chip + '">' +
       '<span class="chip__dot"></span>' + util.esc(meta.rotulo) + '</span>';
   }
@@ -463,15 +475,15 @@
   /* ---------- Tema ------------------------------------------------------------ */
 
   function temaAtual() {
-    try { return localStorage.getItem(CELAB.APP.themeKey) || 'light'; }
+    try { return localStorage.getItem(SAGETI.APP.themeKey) || 'light'; }
     catch (e) { return 'light'; }
   }
 
   function aplicarTema(tema) {
     document.documentElement.setAttribute('data-theme', tema);
-    try { localStorage.setItem(CELAB.APP.themeKey, tema); } catch (e) { /* ignora */ }
+    try { localStorage.setItem(SAGETI.APP.themeKey, tema); } catch (e) { /* ignora */ }
     // Os gráficos leem cores do CSS: precisam ser repintados na troca.
-    if (CELAB.charts && CELAB.charts.repintarTodos) CELAB.charts.repintarTodos();
+    if (SAGETI.charts && SAGETI.charts.repintarTodos) SAGETI.charts.repintarTodos();
   }
 
   function alternarTema() {
@@ -517,7 +529,7 @@
     return out;
   }
 
-  CELAB.ui = {
+  SAGETI.ui = {
     icone: icone,
     toast: toast,
     modal: modal,
@@ -541,4 +553,4 @@
     dadosForm: dadosForm
   };
 
-})(window.CELAB);
+})(window.SAGETI);

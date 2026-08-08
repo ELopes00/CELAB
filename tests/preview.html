@@ -6,15 +6,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CELAB · Preview</title>
+  <title>SAGE-TI · Preview</title>
   <link rel="stylesheet" href="../css/styles.css">
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"></script>
 </head>
 <body>
   <div id="app"></div>
   <div class="toast-stack" id="toast-stack"></div>
 
   <script src="../js/config.js"></script>
+  <script src="../js/config.properties.js"></script>
+  <script src="../js/status-cores.js"></script>
   <script src="../js/ui.js"></script>
   <script src="../js/listas.js"></script>
   <script src="../js/store.js"></script>
@@ -22,6 +26,7 @@
   <script src="../js/export.js"></script>
   <script src="../js/gerenciador.js"></script>
   <script src="../js/importar.js"></script>
+  <script src="../js/scanner.js"></script>
   <script src="../js/pages/login.js"></script>
   <script src="../js/pages/dashboard.js"></script>
   <script src="../js/pages/estoque.js"></script>
@@ -34,13 +39,13 @@
     (function () {
       var q = new URLSearchParams(location.search);
       var tema = q.get('tema') || 'light';
-      localStorage.setItem(CELAB.APP.themeKey, tema);
+      localStorage.setItem(SAGETI.APP.themeKey, tema);
       document.documentElement.setAttribute('data-theme', tema);
 
       // A rota vem pelo hash da própria URL (…/preview.html?tema=dark#/estoque);
       // mexer em location.hash aqui abortaria a captura em headless.
       if (q.get('login') !== '1') {
-        sessionStorage.setItem(CELAB.APP.sessionKey, JSON.stringify({
+        sessionStorage.setItem(SAGETI.APP.sessionKey, JSON.stringify({
           id: 'preview', usuario: 'admin', nome: 'Ezequiel Lopes',
           perfil: 'admin', entrouEm: new Date().toISOString()
         }));

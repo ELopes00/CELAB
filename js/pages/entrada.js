@@ -1,17 +1,17 @@
 /* ==========================================================================
-   CELAB — Aba: Entrada de Equipamentos
+   SAGE-TI — Aba: Entrada de Equipamentos
    --------------------------------------------------------------------------
    Salvar aqui cria ou atualiza o item no Estoque Laboratório e repinta a
-   Dashboard no mesmo instante. Todos os dropdowns leem de CELAB.listas e
+   Dashboard no mesmo instante. Todos os dropdowns leem de SAGETI.listas e
    trazem o botão de engrenagem para gerenciar as opções sem sair da tela.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
-  var L = CELAB.listas;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
+  var L = SAGETI.listas;
 
   function esqueleto() {
     return '' +
@@ -57,16 +57,22 @@
 
               '<div class="field">' +
                 '<label for="en-tombo-novo">Tombo Novo</label>' +
-                '<input class="input" type="text" id="en-tombo-novo" name="tomboNovo" ' +
-                  'inputmode="numeric" placeholder="Ex.: 045112" autocomplete="off">' +
+                '<div class="field__linha">' +
+                  '<input class="input" type="text" id="en-tombo-novo" name="tomboNovo" ' +
+                    'inputmode="numeric" placeholder="Ex.: 045112" autocomplete="off">' +
+                  SAGETI.scanner.botaoHTML('en-tombo-novo', 'Ler tombo pela câmera') +
+                '</div>' +
                 '<span class="field__help" id="en-aviso-tombo"></span>' +
                 '<span class="field__error">Informe o tombo novo ou o antigo.</span>' +
               '</div>' +
 
               '<div class="field">' +
                 '<label for="en-tombo-antigo">Tombo Antigo</label>' +
-                '<input class="input" type="text" id="en-tombo-antigo" name="tomboAntigo" ' +
-                  'inputmode="numeric" placeholder="Ex.: 11233" autocomplete="off">' +
+                '<div class="field__linha">' +
+                  '<input class="input" type="text" id="en-tombo-antigo" name="tomboAntigo" ' +
+                    'inputmode="numeric" placeholder="Ex.: 11233" autocomplete="off">' +
+                  SAGETI.scanner.botaoHTML('en-tombo-antigo', 'Ler tombo pela câmera') +
+                '</div>' +
               '</div>' +
 
               '<div class="field">' +
@@ -82,7 +88,7 @@
                 '<label for="en-modelo">Modelo <span class="req">*</span></label>' +
                 '<div class="field__linha">' +
                   '<select class="select" id="en-modelo" name="modelo" data-obrigatorio></select>' +
-                  (CELAB.auth.permissao('podeGerenciarListas')
+                  (SAGETI.auth.permissao('podeGerenciarListas')
                     ? '<button type="button" class="field__gerenciar" data-gerenciar-lista="modelos" ' +
                       'data-alvo-campo="en-modelo" title="Gerenciar modelos" ' +
                       'aria-label="Gerenciar modelos">' + UI.icone('engrenagem', 15) + '</button>'
@@ -171,7 +177,7 @@
   }
 
   function entradas() {
-    return CELAB.store.listarMovimentacoes().filter(function (m) { return m.tipo === 'ENTRADA'; });
+    return SAGETI.store.listarMovimentacoes().filter(function (m) { return m.tipo === 'ENTRADA'; });
   }
 
   function desenharRecentes(container) {
@@ -223,6 +229,7 @@
     var aviso = container.querySelector('#en-aviso-tombo');
 
     var repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
+    SAGETI.scanner.ligarBotoes(container);
 
     function mostrarDescStatus() {
       var meta = L.statusMeta(selStatus.value);
@@ -233,7 +240,7 @@
 
     /* Avisa quando o tombo já existe e pré-preenche categoria e modelo. */
     function checarTombo() {
-      var existente = CELAB.store.acharPorTombo({
+      var existente = SAGETI.store.acharPorTombo({
         tomboNovo: tomboNovo.value, tomboAntigo: tomboAntigo.value
       });
       if (!existente) { aviso.textContent = ''; aviso.style.color = ''; return; }
@@ -256,7 +263,7 @@
     form.addEventListener('submit', function (e) {
       e.preventDefault();
 
-      if (!CELAB.auth.permissao('podeEditar')) {
+      if (!SAGETI.auth.permissao('podeEditar')) {
         return UI.toast('warn', 'Sem permissão', 'Seu perfil é somente de consulta.');
       }
       if (!UI.validarForm(form)) {
@@ -270,7 +277,7 @@
         return UI.toast('warn', 'Tombo obrigatório', 'Informe ao menos um número de tombo.');
       }
 
-      var r = CELAB.store.registrarEntrada(dados);
+      var r = SAGETI.store.registrarEntrada(dados);
       if (!r.ok) return UI.toast('error', 'Não foi possível registrar', r.erro);
 
       UI.toast('success',
@@ -310,22 +317,30 @@
       if (!acao) return;
       var qual = acao.getAttribute('data-acao');
 
-      if (qual === 'importar') return CELAB.importar.abrir();
+      if (qual === 'importar') return SAGETI.importar.abrir();
 
       var lista = entradas();
       if (!lista.length) return UI.toast('warn', 'Nada a exportar', 'Nenhuma entrada registrada.');
 
       if (qual === 'excel') {
-        CELAB.exportar.paraExcel([{
-          nome: 'Entradas', tituloRelatorio: 'CELAB — Entradas de Equipamentos',
-          registros: lista, colunas: CELAB.exportar.COLS_MOV
-        }], 'CELAB_Entradas_' + U.carimbo() + '.xlsx');
+        var nomeArqEntrada = SAGETI.APP.nome + '_Entradas_' + U.carimbo() + '.xlsx';
+        if (SAGETI.exportar.paraExcelColorido) {
+          SAGETI.exportar.paraExcelColorido({
+            nome: 'Entradas', titulo: SAGETI.APP.nome + ' — Entradas de Equipamentos',
+            registros: lista, colunas: SAGETI.exportar.COLS_MOV, colunaStatus: 'statusResultante'
+          }, nomeArqEntrada);
+        } else {
+          SAGETI.exportar.paraExcel([{
+            nome: 'Entradas', tituloRelatorio: SAGETI.APP.nome + ' — Entradas de Equipamentos',
+            registros: lista, colunas: SAGETI.exportar.COLS_MOV
+          }], nomeArqEntrada);
+        }
       } else if (qual === 'pdf') {
-        CELAB.exportar.paraPDF({
+        SAGETI.exportar.paraPDF({
           titulo: 'Entradas de Equipamentos',
           subtitulo: 'Todas as entradas registradas no laboratório',
-          registros: lista, colunas: CELAB.exportar.COLS_MOV
-        }, 'CELAB_Entradas_' + U.carimbo() + '.pdf');
+          registros: lista, colunas: SAGETI.exportar.COLS_MOV
+        }, SAGETI.APP.nome + '_Entradas_' + U.carimbo() + '.pdf');
       }
     });
 
@@ -342,7 +357,7 @@
 
     desenharRecentes(container);
 
-    var cancelar = CELAB.store.assinar(function (ev) {
+    var cancelar = SAGETI.store.assinar(function (ev) {
       if (ev && ev.tipo === 'listas') return repintarListas();
       desenharRecentes(container);
     });
@@ -350,11 +365,11 @@
     return { destruir: cancelar };
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.entrada = {
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.entrada = {
     titulo: 'Entrada de Equipamentos',
     subtitulo: 'Registro de chegada ao laboratório',
     montar: montar
   };
 
-})(window.CELAB);
+})(window.SAGETI);

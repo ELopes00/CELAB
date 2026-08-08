@@ -1,4 +1,4 @@
-# CELAB — Controle de Estoque de Laboratório
+# SAGE-TI — Sistema de Ativos e Gestão de Estoque de Tecnologia da Informação
 
 Sistema web de controle de estoque para laboratório de manutenção de equipamentos de TI.
 Registra entradas, saídas e alterações; mantém o inventário e a dashboard sincronizados
@@ -47,7 +47,7 @@ acessam por `http://<ip-desta-máquina>:8080`. Host e porta ficam no topo do arq
 Libere a porta no firewall **uma vez**, em um PowerShell como Administrador:
 
 ```powershell
-New-NetFirewallRule -DisplayName "CELAB 8080" -Direction Inbound `
+New-NetFirewallRule -DisplayName "SAGE-TI 8080" -Direction Inbound `
   -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private
 ```
 
@@ -240,18 +240,18 @@ CELAB/
 
 ### Onde ler as listas no código
 
-Sempre por `CELAB.listas`, nunca de `config.js`:
+Sempre por `SAGETI.listas`, nunca de `config.js`:
 
 ```js
-CELAB.listas.get('setores')        // array de 175 setores
-CELAB.listas.statusDe('entrada')   // rótulos válidos no formulário de entrada
-CELAB.listas.statusDe('saida')     // idem, para a saída
-CELAB.listas.ttrDe('saida')        // TTR do contexto de saída
-CELAB.listas.statusMeta('Devolução')  // { tom, noLab, contextos, desc }
-CELAB.listas.modelosDe('Monitor')  // { sugeridos, outros } — nada fica inacessível
+SAGETI.listas.get('setores')        // array de 175 setores
+SAGETI.listas.statusDe('entrada')   // rótulos válidos no formulário de entrada
+SAGETI.listas.statusDe('saida')     // idem, para a saída
+SAGETI.listas.ttrDe('saida')        // TTR do contexto de saída
+SAGETI.listas.statusMeta('Devolução')  // { tom, noLab, contextos, desc }
+SAGETI.listas.modelosDe('Monitor')  // { sugeridos, outros } — nada fica inacessível
 ```
 
-Os acessos antigos (`CELAB.EQUIPAMENTOS`, `CELAB.PREDIOS`, `CELAB.statusMeta`…) continuam
+Os acessos antigos (`SAGETI.EQUIPAMENTOS`, `SAGETI.PREDIOS`, `SAGETI.statusMeta`…) continuam
 funcionando: viraram *getters* que leem das listas dinâmicas.
 
 Para montar um campo de seleção já com o botão de gerenciamento:
@@ -278,7 +278,7 @@ recarregar, sem *polling*.
 function montar(container) {
   container.innerHTML = esqueleto();
   desenhar(container);
-  var cancelar = CELAB.store.assinar(function () { desenhar(container); });
+  var cancelar = SAGETI.store.assinar(function () { desenhar(container); });
   return { destruir: cancelar };
 }
 ```
@@ -287,7 +287,7 @@ function montar(container) {
 
 Módulos ES (`type="module"`) são bloqueados por CORS quando a página é aberta via
 `file://`. Como o requisito era "abrir e usar", os arquivos usam o namespace global
-`window.CELAB` e a ordem de carregamento declarada no `index.html`.
+`window.SAGETI` e a ordem de carregamento declarada no `index.html`.
 
 ### Dependências (CDN, com degradação)
 

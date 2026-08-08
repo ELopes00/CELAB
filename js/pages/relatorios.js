@@ -1,18 +1,18 @@
 /* ==========================================================================
-   CELAB — Aba: Relatórios e Filtros
+   SAGE-TI — Aba: Relatórios e Filtros
    --------------------------------------------------------------------------
    Histórico completo: entradas, saídas, cadastros diretos, alterações de
    status e exclusões. Uma linha do filtro escopa tudo — indicadores, tabela
    e exportação leem sempre a mesma fatia.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
 
-  var L = CELAB.listas;
+  var L = SAGETI.listas;
   var POR_PAGINA = 30;
 
   var filtros = {
@@ -26,7 +26,7 @@
   /* ---------- Filtro --------------------------------------------------------- */
 
   function filtrar() {
-    var lista = CELAB.store.listarMovimentacoes();
+    var lista = SAGETI.store.listarMovimentacoes();
 
     if (filtros.de)  lista = lista.filter(function (m) { return (m.data || '') >= filtros.de; });
     if (filtros.ate) lista = lista.filter(function (m) { return (m.data || '') <= filtros.ate; });
@@ -73,7 +73,7 @@
       p.push('Período: ' + (filtros.de ? U.dataBR(filtros.de) : 'início') +
              ' a ' + (filtros.ate ? U.dataBR(filtros.ate) : 'hoje'));
     }
-    if (filtros.tipo)        p.push('Tipo: ' + CELAB.tipoMovMeta(filtros.tipo).rotulo);
+    if (filtros.tipo)        p.push('Tipo: ' + SAGETI.tipoMovMeta(filtros.tipo).rotulo);
     if (filtros.predio)      p.push('Prédio: ' + filtros.predio);
     if (filtros.setor)       p.push('Setor: ' + filtros.setor);
     if (filtros.status)      p.push('Status: ' + filtros.status);
@@ -113,7 +113,7 @@
           '<input class="input" type="date" id="r-ate"></div>' +
         '<div class="field"><label for="r-tipo">Movimentação</label>' +
           '<select class="select" id="r-tipo">' +
-            UI.opcoes(CELAB.TIPOS_MOV.map(function (t) { return { valor: t.valor, rotulo: t.rotulo }; }), '', 'Todas') +
+            UI.opcoes(SAGETI.TIPOS_MOV.map(function (t) { return { valor: t.valor, rotulo: t.rotulo }; }), '', 'Todas') +
           '</select></div>' +
         '<div class="field field--grow"><label for="r-predio">Prédio</label>' +
           '<select class="select" id="r-predio">' + UI.opcoes(L.get('predios'), '', 'Todos') + '</select></div>' +
@@ -263,7 +263,7 @@
   /* ---------- Detalhe --------------------------------------------------------- */
 
   function abrirDetalhe(id) {
-    var m = CELAB.store.listarMovimentacoes().find(function (x) { return x.id === id; });
+    var m = SAGETI.store.listarMovimentacoes().find(function (x) { return x.id === id; });
     if (!m) return;
 
     function linha(k, v) {
@@ -272,7 +272,7 @@
     }
 
     UI.modal({
-      titulo: CELAB.tipoMovMeta(m.tipo).rotulo + ' — ' + (m.equipamento || 'Equipamento'),
+      titulo: SAGETI.tipoMovMeta(m.tipo).rotulo + ' — ' + (m.equipamento || 'Equipamento'),
       subtitulo: 'Registrado em ' + U.dataHoraBR(m.registradoEm) + ' por ' + (m.usuario || '—'),
       corpo:
         '<div class="result-preview">' +
@@ -302,22 +302,31 @@
     if (!lista.length) {
       return UI.toast('warn', 'Nada a exportar', 'Nenhuma movimentação corresponde aos filtros.');
     }
-    var nome = 'CELAB_Relatorio_' + U.carimbo();
+    var nome = SAGETI.APP.nome + '_Relatorio_' + U.carimbo();
 
     if (formato === 'excel') {
-      CELAB.exportar.paraExcel([{
+      var cfgExcel = {
         nome: 'Movimentações',
-        tituloRelatorio: 'CELAB — Relatório de Movimentações',
+        titulo: SAGETI.APP.nome + ' — Relatório de Movimentações',
         registros: lista,
-        colunas: CELAB.exportar.COLS_MOV,
+        colunas: SAGETI.exportar.COLS_MOV,
+        colunaStatus: 'statusResultante',
         resumo: [['Filtros', rotuloFiltro()], ['Registros', lista.length]]
-      }], nome + '.xlsx');
+      };
+      if (SAGETI.exportar.paraExcelColorido) {
+        SAGETI.exportar.paraExcelColorido(cfgExcel, nome + '.xlsx');
+      } else {
+        SAGETI.exportar.paraExcel([{
+          nome: cfgExcel.nome, tituloRelatorio: cfgExcel.titulo,
+          registros: cfgExcel.registros, colunas: cfgExcel.colunas, resumo: cfgExcel.resumo
+        }], nome + '.xlsx');
+      }
     } else {
-      CELAB.exportar.paraPDF({
+      SAGETI.exportar.paraPDF({
         titulo: 'Relatório de Movimentações',
         subtitulo: rotuloFiltro(),
         registros: lista,
-        colunas: CELAB.exportar.COLS_MOV
+        colunas: SAGETI.exportar.COLS_MOV
       }, nome + '.pdf');
     }
   }
@@ -435,18 +444,18 @@
       desenhar(container);
     }
 
-    var cancelar = CELAB.store.assinar(function (ev) {
+    var cancelar = SAGETI.store.assinar(function (ev) {
       if (ev && ev.tipo === 'listas') return repintarFiltros();
       desenhar(container);
     });
     return { destruir: cancelar };
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.relatorios = {
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.relatorios = {
     titulo: 'Relatórios e Filtros',
     subtitulo: 'Histórico completo de movimentações',
     montar: montar
   };
 
-})(window.CELAB);
+})(window.SAGETI);

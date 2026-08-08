@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Store: estado global, persistência e regras de negócio
+   SAGE-TI — Store: estado global, persistência e regras de negócio
    --------------------------------------------------------------------------
    Fonte única da verdade. Toda mutação passa por aqui e dispara `emit()`,
    que notifica (a) os assinantes desta aba e (b) as outras abas abertas via
@@ -12,10 +12,10 @@
    interpretar o texto do status, que é livre e editável pelo usuário.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var KEY = CELAB.APP.storageKey;
+  var KEY = SAGETI.APP.storageKey;
 
   /* ---------- Utilitários -------------------------------------------------- */
 
@@ -40,7 +40,7 @@
 
   /** Presença física padrão de um status (usada só na edição pelo Estoque). */
   function noLabDoStatus(status) {
-    var meta = CELAB.listas.statusMeta(status);
+    var meta = SAGETI.listas.statusMeta(status);
     return meta ? !!meta.noLab : true;
   }
 
@@ -78,7 +78,7 @@
       var bruto = window.localStorage.getItem(KEY);
       return bruto ? JSON.parse(bruto) : null;
     } catch (e) {
-      console.warn('[CELAB] Falha ao ler o armazenamento local:', e);
+      console.warn('[SAGE-TI] Falha ao ler o armazenamento local:', e);
       return null;
     }
   }
@@ -89,9 +89,9 @@
     try {
       window.localStorage.setItem(KEY, payload);
     } catch (e) {
-      console.error('[CELAB] Falha ao gravar (cota excedida?):', e);
-      if (CELAB.ui && CELAB.ui.toast) {
-        CELAB.ui.toast('error', 'Falha ao salvar',
+      console.error('[SAGE-TI] Falha ao gravar (cota excedida?):', e);
+      if (SAGETI.ui && SAGETI.ui.toast) {
+        SAGETI.ui.toast('error', 'Falha ao salvar',
           'O navegador recusou a gravação local. Exporte os dados para não perdê-los.');
       }
     }
@@ -108,7 +108,7 @@
     agendarGravacao();
     var detalhe = evento || { tipo: 'sync' };
     ouvintes.forEach(function (fn) {
-      try { fn(detalhe, estado); } catch (e) { console.error('[CELAB] Erro em ouvinte:', e); }
+      try { fn(detalhe, estado); } catch (e) { console.error('[SAGE-TI] Erro em ouvinte:', e); }
     });
     if (canal) {
       try { canal.postMessage({ origem: origemLocal, evento: detalhe }); } catch (e) { /* ignora */ }
@@ -146,7 +146,7 @@
   function iniciarRealtime() {
     if ('BroadcastChannel' in window) {
       try {
-        canal = new BroadcastChannel(CELAB.APP.channel);
+        canal = new BroadcastChannel(SAGETI.APP.channel);
         canal.onmessage = function (msg) {
           var d = msg.data || {};
           if (d.origem === origemLocal) return;
@@ -181,6 +181,12 @@
     estado.movimentacoes.forEach(function (m) {
       if (m.tecnico === undefined) { m.tecnico = ''; mudou++; }
     });
+    // Rebranding CELAB -> SAGE-TI: corrige o nome do admin gravado por uma
+    // carga anterior à mudança. Só troca o valor de fábrica antigo — se o
+    // admin já renomeou a própria conta, o nome escolhido é preservado.
+    estado.usuarios.forEach(function (u) {
+      if (u.nome === 'Administrador CELAB') { u.nome = 'Administrador SAGE-TI'; mudou++; }
+    });
     if (mudou) { estado.meta.versao = 2; gravar(); }
     return mudou;
   }
@@ -190,10 +196,10 @@
   // Variável de credencial
 
   function usuariosPadrao() {
-    var cred = CELAB.CREDENCIAIS;
+    var cred = SAGETI.CREDENCIAIS;
     return [
       { id: uid(), usuario: cred.admin.usuario,   senha: cred.admin.senha,   
-        nome: 'Administrador CELAB',    perfil: 'admin',   criadoEm: agora() },
+        nome: 'Administrador SAGE-TI',    perfil: 'admin',   criadoEm: agora() },
       { id: uid(), usuario: cred.tecnico.usuario, senha: cred.tecnico.senha, 
         nome: 'Técnico de Laboratório', perfil: 'tecnico', criadoEm: agora() }
     ];
@@ -225,7 +231,7 @@
       { cat: 'Eq. Video Conf.', mod: 'GoPresence Teams 10x', tn: '054000', ta: '',    st: 'Estoque',              pr: 'Sede Administrativa', se: 'SG - Secretaria Geral', dias: 1 }
     ];
 
-    var ttr = CELAB.listas.ttrDe('entrada');
+    var ttr = SAGETI.listas.ttrDe('entrada');
     demo.forEach(function (d, i) {
       registrarEntrada({
         dataEntrada: diasAtras(d.dias),
@@ -242,8 +248,8 @@
       }, { silencioso: true, usuario: 'sistema' });
     });
 
-    var ttrS = CELAB.listas.ttrDe('saida');
-    var tecnicos = CELAB.listas.get('tecnicos');
+    var ttrS = SAGETI.listas.ttrDe('saida');
+    var tecnicos = SAGETI.listas.get('tecnicos');
 
     registrarSaida({
       dataSaida: diasAtras(1), chamado: 'CH-10480',
@@ -268,7 +274,7 @@
 
   function inicializar(opcoes) {
     // As listas precisam existir antes de qualquer regra que consulte status.
-    CELAB.listas.inicializar();
+    SAGETI.listas.inicializar();
 
     var dados = ler();
     if (dados && dados.equipamentos) {
@@ -292,7 +298,7 @@
     var registro = Object.assign({
       id: uid(),
       registradoEm: agora(),
-      usuario: (CELAB.auth && CELAB.auth.usuarioAtual() && CELAB.auth.usuarioAtual().usuario) || 'sistema',
+      usuario: (SAGETI.auth && SAGETI.auth.usuarioAtual() && SAGETI.auth.usuarioAtual().usuario) || 'sistema',
       tecnico: ''
     }, mov);
     estado.movimentacoes.unshift(registro);
@@ -438,6 +444,12 @@
 
   function excluirEquipamento(id, opcoes) {
     opcoes = opcoes || {};
+    // Reforço de RBAC no próprio store: o botão de excluir já some da tela
+    // para o perfil Técnico, mas sem esta checagem aqui a exclusão ainda
+    // seria alcançável direto pelo console do navegador.
+    if (!opcoes.silencioso && SAGETI.auth && !SAGETI.auth.permissao('podeExcluir')) {
+      return { ok: false, erro: 'Seu perfil não tem permissão para excluir equipamentos.' };
+    }
     var i = estado.equipamentos.findIndex(function (e) { return e.id === id; });
     if (i === -1) return { ok: false, erro: 'Equipamento não encontrado.' };
     var eq = estado.equipamentos[i];
@@ -528,7 +540,7 @@
       return {
         ok: false,
         erro: 'Este equipamento já saiu do laboratório em ' +
-          (eq.dataSaida ? CELAB.util.dataBR(eq.dataSaida) : 'data anterior') +
+          (eq.dataSaida ? SAGETI.util.dataBR(eq.dataSaida) : 'data anterior') +
           ' para ' + (eq.predioDestino || 'destino não informado') +
           ' (status "' + eq.status + '").'
       };
@@ -641,7 +653,7 @@
       pares.forEach(function (par) {
         var bruto = norm(linha[par[0]]);
         if (!bruto) { resolvido[par[0]] = ''; return; }
-        var r = CELAB.listas.garantir(par[1], bruto, criarOpcoes && !simular);
+        var r = SAGETI.listas.garantir(par[1], bruto, criarOpcoes && !simular);
         if (r.criado) rel.opcoesCriadas.push(par[1] + ': ' + r.valor);
         // Valor fora da lista e sem permissão de criar: mantém o texto original,
         // para não perder dado do inventário por causa de cadastro.
@@ -652,7 +664,7 @@
       var ttrBruto = norm(linha.ttr);
       if (ttrBruto) {
         var listaTtr = linha.dataSaida ? 'ttrSaida' : 'ttrEntrada';
-        var rt = CELAB.listas.garantir(listaTtr, ttrBruto, criarOpcoes && !simular);
+        var rt = SAGETI.listas.garantir(listaTtr, ttrBruto, criarOpcoes && !simular);
         if (rt.criado) rel.opcoesCriadas.push(listaTtr + ': ' + rt.valor);
         resolvido.ttr = rt.valor || ttrBruto;
       } else {
@@ -723,7 +735,7 @@
 
     if (!simular) {
       rel.opcoesCriadas = rel.opcoesCriadas.filter(function (v, i, a) { return a.indexOf(v) === i; });
-      if (rel.opcoesCriadas.length) CELAB.listas.confirmarGarantias();
+      if (rel.opcoesCriadas.length) SAGETI.listas.confirmarGarantias();
 
       registrarMovimentacao({
         tipo: 'IMPORTACAO', data: hoje(),
@@ -750,7 +762,7 @@
     var noLab = estoqueLaboratorio();
 
     var contagem = {};
-    CELAB.listas.statusTodos().forEach(function (s) { contagem[s] = 0; });
+    SAGETI.listas.statusTodos().forEach(function (s) { contagem[s] = 0; });
     todos.forEach(function (e) {
       if (contagem[e.status] === undefined) contagem[e.status] = 0;
       contagem[e.status]++;
@@ -760,7 +772,7 @@
        Dashboard mede a saúde do estoque pelo tom de cada status. */
     var porTom = { good: 0, warning: 0, serious: 0, critical: 0, info: 0, neutral: 0 };
     noLab.forEach(function (e) {
-      var t = CELAB.listas.statusMeta(e.status).tom || 'neutral';
+      var t = SAGETI.listas.statusMeta(e.status).tom || 'neutral';
       if (porTom[t] === undefined) porTom[t] = 0;
       porTom[t]++;
     });
@@ -820,12 +832,12 @@
 
   function exportarJSON() {
     return JSON.stringify({
-      app: CELAB.APP.nome,
-      versao: CELAB.APP.versao,
+      app: SAGETI.APP.nome,
+      versao: SAGETI.APP.versao,
       exportadoEm: agora(),
       equipamentos: estado.equipamentos,
       movimentacoes: estado.movimentacoes,
-      listas: JSON.parse(CELAB.listas.exportarJSON()).listas
+      listas: JSON.parse(SAGETI.listas.exportarJSON()).listas
     }, null, 2);
   }
 
@@ -836,7 +848,7 @@
       return { ok: false, erro: 'O arquivo não contém uma lista de equipamentos.' };
     }
     // Restaura as listas antes dos registros, para os status resolverem.
-    if (dados.listas) CELAB.listas.importarJSON(JSON.stringify({ listas: dados.listas }));
+    if (dados.listas) SAGETI.listas.importarJSON(JSON.stringify({ listas: dados.listas }));
     estado.equipamentos = dados.equipamentos;
     estado.movimentacoes = Array.isArray(dados.movimentacoes) ? dados.movimentacoes : [];
     migrar();
@@ -852,7 +864,7 @@
 
   /* ---------- API pública -------------------------------------------------- */
 
-  CELAB.store = {
+  SAGETI.store = {
     inicializar: inicializar,
     assinar: assinar,
     notificarListas: notificarListas,
@@ -891,14 +903,14 @@
 
   function carregarSessao() {
     try {
-      var bruto = window.sessionStorage.getItem(CELAB.APP.sessionKey) ||
-                  window.localStorage.getItem(CELAB.APP.sessionKey);
+      var bruto = window.sessionStorage.getItem(SAGETI.APP.sessionKey) ||
+                  window.localStorage.getItem(SAGETI.APP.sessionKey);
       sessao = bruto ? JSON.parse(bruto) : null;
     } catch (e) { sessao = null; }
     return sessao;
   }
 
-  CELAB.auth = {
+  SAGETI.auth = {
     entrar: function (usuario, senha, lembrar) {
       var u = estado.usuarios.find(function (x) {
         return x.usuario.toLowerCase() === norm(usuario).toLowerCase() && x.senha === senha;
@@ -907,26 +919,26 @@
       sessao = { id: u.id, usuario: u.usuario, nome: u.nome, perfil: u.perfil, entrouEm: agora() };
       var payload = JSON.stringify(sessao);
       try {
-        if (lembrar) window.localStorage.setItem(CELAB.APP.sessionKey, payload);
-        else window.sessionStorage.setItem(CELAB.APP.sessionKey, payload);
+        if (lembrar) window.localStorage.setItem(SAGETI.APP.sessionKey, payload);
+        else window.sessionStorage.setItem(SAGETI.APP.sessionKey, payload);
       } catch (e) { /* sessão só em memória */ }
       return { ok: true, usuario: sessao };
     },
     sair: function () {
       sessao = null;
       try {
-        window.sessionStorage.removeItem(CELAB.APP.sessionKey);
-        window.localStorage.removeItem(CELAB.APP.sessionKey);
+        window.sessionStorage.removeItem(SAGETI.APP.sessionKey);
+        window.localStorage.removeItem(SAGETI.APP.sessionKey);
       } catch (e) { /* ignora */ }
     },
     usuarioAtual: function () { return sessao || carregarSessao(); },
     autenticado: function () { return !!(sessao || carregarSessao()); },
     permissao: function (chave) {
-      var u = CELAB.auth.usuarioAtual();
+      var u = SAGETI.auth.usuarioAtual();
       if (!u) return false;
-      var p = CELAB.PERFIS[u.perfil] || CELAB.PERFIS.leitura;
+      var p = SAGETI.PERFIS[u.perfil] || SAGETI.PERFIS.leitura;
       return !!p[chave];
     }
   };
 
-})(window.CELAB);
+})(window.SAGETI);

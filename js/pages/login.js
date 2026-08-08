@@ -1,11 +1,11 @@
 /* ==========================================================================
-   CELAB — Tela de Login
+   SAGE-TI — Tela de Login
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
+  var UI = SAGETI.ui;
 
   function montar(raiz, aoEntrar) {
     raiz.className = 'login-screen';
@@ -23,7 +23,8 @@
           '<div class="logo-slot__caption"></div>' +
         '</div>' +
 
-        '<h1 class="login-title">Controle de Estoque de Laboratório</h1>' +
+        '<h1 class="login-title">' + SAGETI.util.esc(SAGETI.APP.nome) + '</h1>' +
+        '<p class="login-sub" style="margin-top:-10px;font-size:12px">' + SAGETI.util.esc(SAGETI.APP.descricao) + '</p>' +
         '<p class="login-sub">Informe suas credenciais para acessar o sistema</p>' +
 
         '<form id="form-login" novalidate autocomplete="on">' +
@@ -112,7 +113,7 @@
       if (!UI.validarForm(form)) return;
 
       var dados = UI.dadosForm(form);
-      var r = CELAB.auth.entrar(dados.usuario, dados.senha, !!dados.lembrar);
+      var r = SAGETI.auth.entrar(dados.usuario, dados.senha, !!dados.lembrar);
 
       if (!r.ok) {
         erro.querySelector('span').textContent = r.erro;
@@ -127,7 +128,7 @@
     setTimeout(function () { raiz.querySelector('#login-usuario').focus(); }, 60);
   }
 
-  CELAB.pages = CELAB.pages || {};
-  CELAB.pages.login = { montar: montar };
+  SAGETI.pages = SAGETI.pages || {};
+  SAGETI.pages.login = { montar: montar };
 
-})(window.CELAB);
+})(window.SAGETI);

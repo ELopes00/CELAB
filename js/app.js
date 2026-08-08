@@ -1,12 +1,12 @@
 /* ==========================================================================
-   CELAB — Shell da aplicação: roteador, sidebar e barra superior
+   SAGE-TI — Shell da aplicação: roteador, sidebar e barra superior
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
 
   var ROTAS = [
     { id: 'dashboard',     rotulo: 'Dashboard',              icone: 'dashboard', secao: 'Principal' },
@@ -50,8 +50,8 @@
             // Substitua o texto por <img src="assets/logo.png" alt=""> quando tiver a logo.
             '<div class="sidebar__logo"><img src="assets/logoBranca.png" alt=""></div>'  +
             '<div style="min-width:0">' +
-              '<div class="sidebar__name">CELAB</div>' +
-              '<div class="sidebar__tag">Controle de Estoque</div>' +
+              '<div class="sidebar__name">' + U.esc(SAGETI.APP.nome) + '</div>' +
+              '<div class="sidebar__tag">Ativos &amp; Estoque de TI</div>' +
             '</div>' +
           '</div>' +
 
@@ -71,7 +71,7 @@
               '<div style="min-width:0;flex:1">' +
                 '<div class="user-chip__name">' + U.esc(usuario.nome || usuario.usuario) + '</div>' +
                 '<div class="user-chip__role">' +
-                  U.esc((CELAB.PERFIS[usuario.perfil] || {}).rotulo || usuario.perfil) + '</div>' +
+                  U.esc((SAGETI.PERFIS[usuario.perfil] || {}).rotulo || usuario.perfil) + '</div>' +
               '</div>' +
               '<button class="icon-btn" data-acao="sair" title="Sair" aria-label="Sair" ' +
                 'style="background:transparent;border-color:rgba(255,255,255,.12);color:#c9cdd4;width:30px;height:30px">' +
@@ -122,14 +122,14 @@
     if (paginaViva && paginaViva.destruir) {
       try { paginaViva.destruir(); } catch (e) { console.error(e); }
     }
-    CELAB.charts.destruirTodos();
+    SAGETI.charts.destruirTodos();
     paginaViva = null;
     rotaAtual = rota.id;
 
     var pagina = document.getElementById('pagina');
     pagina.innerHTML = '';
 
-    var modulo = CELAB.pages[rota.id];
+    var modulo = SAGETI.pages[rota.id];
     if (!modulo) {
       pagina.innerHTML = '<div class="card"><div class="card__body">Página não encontrada.</div></div>';
       return;
@@ -137,7 +137,7 @@
 
     document.getElementById('topbar-titulo').textContent = modulo.titulo || rota.rotulo;
     document.getElementById('topbar-sub').textContent = modulo.subtitulo || '';
-    document.title = 'CELAB · ' + (modulo.titulo || rota.rotulo);
+    document.title = SAGETI.APP.nome + ' · ' + (modulo.titulo || rota.rotulo);
 
     paginaViva = modulo.montar(pagina, navegar) || null;
 
@@ -177,7 +177,7 @@
   /* ---------- Contador na sidebar ------------------------------------------------ */
 
   function atualizarBadges() {
-    var n = CELAB.store.estoqueLaboratorio().length;
+    var n = SAGETI.store.estoqueLaboratorio().length;
     document.querySelectorAll('[data-badge="lab"]').forEach(function (el) {
       el.textContent = U.numero(n);
     });
@@ -186,7 +186,7 @@
   /* ---------- Ferramentas de dados ------------------------------------------------ */
 
   function abrirConfig() {
-    var r = CELAB.store.resumo();
+    var r = SAGETI.store.resumo();
     var corpo =
       '<div class="result-preview" style="margin-bottom:18px">' +
         '<div class="result-preview__row"><span class="result-preview__k">Equipamentos cadastrados</span>' +
@@ -194,7 +194,7 @@
         '<div class="result-preview__row"><span class="result-preview__k">No laboratório</span>' +
           '<span class="result-preview__v">' + U.numero(r.totalNoLab) + '</span></div>' +
         '<div class="result-preview__row"><span class="result-preview__k">Movimentações no histórico</span>' +
-          '<span class="result-preview__v">' + U.numero(CELAB.store.listarMovimentacoes().length) + '</span></div>' +
+          '<span class="result-preview__v">' + U.numero(SAGETI.store.listarMovimentacoes().length) + '</span></div>' +
       '</div>' +
 
       '<div class="section-title" style="margin-top:0">Backup e restauração</div>' +
@@ -219,7 +219,7 @@
 
     var ref = UI.modal({
       titulo: 'Dados e backup',
-      subtitulo: 'CELAB ' + CELAB.APP.versao + ' · armazenamento local do navegador',
+      subtitulo: SAGETI.APP.nome + ' ' + SAGETI.APP.versao + ' · armazenamento local do navegador',
       corpo: corpo,
       botoes: [{ texto: 'Fechar', classe: 'btn--ghost' }]
     });
@@ -232,8 +232,8 @@
       var acao = b.getAttribute('data-cfg');
 
       if (acao === 'backup') {
-        U.baixarArquivo(CELAB.store.exportarJSON(),
-          'CELAB_backup_' + U.carimbo() + '.json', 'application/json');
+        U.baixarArquivo(SAGETI.store.exportarJSON(),
+          SAGETI.APP.nome + '_backup_' + U.carimbo() + '.json', 'application/json');
         return UI.toast('success', 'Backup gerado', 'Guarde o arquivo em local seguro.');
       }
 
@@ -248,7 +248,7 @@
           perigo: true
         }).then(function (ok) {
           if (!ok) return;
-          CELAB.store.limparTudo();
+          SAGETI.store.limparTudo();
           UI.toast('success', 'Dados apagados', 'O sistema voltou ao estado inicial.');
         });
       }
@@ -259,7 +259,7 @@
       if (!f) return;
       var leitor = new FileReader();
       leitor.onload = function () {
-        var res = CELAB.store.importarJSON(String(leitor.result));
+        var res = SAGETI.store.importarJSON(String(leitor.result));
         if (res.ok) {
           UI.fecharModal();
           UI.toast('success', 'Dados restaurados', res.total + ' equipamento(s) carregado(s).');
@@ -301,10 +301,10 @@
       if (!b) return;
       var tipo = b.getAttribute('data-exp');
       UI.fecharModal();
-      if (tipo === 'xlsx') return CELAB.exportar.exportarGeralExcel();
-      if (tipo === 'pdf') return CELAB.exportar.exportarGeralPDF();
-      U.baixarArquivo(CELAB.store.exportarJSON(),
-        'CELAB_backup_' + U.carimbo() + '.json', 'application/json');
+      if (tipo === 'xlsx') return SAGETI.exportar.exportarGeralExcel();
+      if (tipo === 'pdf') return SAGETI.exportar.exportarGeralPDF();
+      U.baixarArquivo(SAGETI.store.exportarJSON(),
+        SAGETI.APP.nome + '_backup_' + U.carimbo() + '.json', 'application/json');
       UI.toast('success', 'Backup gerado', 'Arquivo JSON com todos os registros.');
     });
   }
@@ -316,7 +316,7 @@
 
     // O contador da sidebar é reassinado a cada montagem do shell.
     if (cancelarBadge) cancelarBadge();
-    cancelarBadge = CELAB.store.assinar(atualizarBadges);
+    cancelarBadge = SAGETI.store.assinar(atualizarBadges);
     atualizarBadges();
 
     // Delegação no document: liga uma única vez por carga da página, senão
@@ -337,7 +337,7 @@
         if (acao === 'menu') return abrirSidebarMobile();
         if (acao === 'tema') { UI.alternarTema(); return pintarBotaoTema(); }
         if (acao === 'config') return abrirConfig();
-        if (acao === 'importar') { fecharSidebarMobile(); return CELAB.importar.abrir(); }
+        if (acao === 'importar') { fecharSidebarMobile(); return SAGETI.importar.abrir(); }
 
         // Na barra superior o dropdown basta; na sidebar (que fecha no
         // mobile) o modal é o caminho confiável.
@@ -349,16 +349,16 @@
         if (acao === 'exportar-geral') return abrirExportarGeral();
         if (acao === 'exp-xlsx') {
           document.getElementById('menu-exportar').classList.add('hidden');
-          return CELAB.exportar.exportarGeralExcel();
+          return SAGETI.exportar.exportarGeralExcel();
         }
         if (acao === 'exp-pdf') {
           document.getElementById('menu-exportar').classList.add('hidden');
-          return CELAB.exportar.exportarGeralPDF();
+          return SAGETI.exportar.exportarGeralPDF();
         }
         if (acao === 'exp-json') {
           document.getElementById('menu-exportar').classList.add('hidden');
-          U.baixarArquivo(CELAB.store.exportarJSON(),
-            'CELAB_backup_' + U.carimbo() + '.json', 'application/json');
+          U.baixarArquivo(SAGETI.store.exportarJSON(),
+            SAGETI.APP.nome + '_backup_' + U.carimbo() + '.json', 'application/json');
           return UI.toast('success', 'Backup gerado', 'Arquivo JSON com todos os registros.');
         }
 
@@ -399,16 +399,16 @@
   function abrirLogin() {
     if (paginaViva && paginaViva.destruir) { try { paginaViva.destruir(); } catch (e) {} }
     if (cancelarBadge) { cancelarBadge(); cancelarBadge = null; }
-    CELAB.charts.destruirTodos();
+    SAGETI.charts.destruirTodos();
     paginaViva = null;
     rotaAtual = null;
     raiz.innerHTML = '';
-    document.title = 'CELAB · Entrar';
-    CELAB.pages.login.montar(raiz, function () { abrirApp(); });
+    document.title = SAGETI.APP.nome + ' · Entrar';
+    SAGETI.pages.login.montar(raiz, function () { abrirApp(); });
   }
 
   function abrirApp() {
-    var usuario = CELAB.auth.usuarioAtual();
+    var usuario = SAGETI.auth.usuarioAtual();
     if (!usuario) return abrirLogin();
 
     raiz.className = '';
@@ -421,7 +421,7 @@
   }
 
   function sair() {
-    CELAB.auth.sair();
+    SAGETI.auth.sair();
     window.location.hash = '';
     abrirLogin();
   }
@@ -431,11 +431,11 @@
   function iniciar() {
     raiz = document.getElementById('app');
     UI.aplicarTema(UI.temaAtual());
-    CELAB.store.inicializar();
+    SAGETI.store.inicializar();
     // Botão ⚙ ao lado dos campos: um único ouvinte para todo o app.
-    CELAB.gerenciador.ligarGlobal();
+    SAGETI.gerenciador.ligarGlobal();
 
-    if (CELAB.auth.autenticado()) abrirApp();
+    if (SAGETI.auth.autenticado()) abrirApp();
     else abrirLogin();
 
     // Sem localStorage (algumas configurações de file://) os dados não persistem.
@@ -457,6 +457,6 @@
     iniciar();
   }
 
-  CELAB.app = { navegar: navegar, sair: sair, rotas: ROTAS };
+  SAGETI.app = { navegar: navegar, sair: sair, rotas: ROTAS };
 
-})(window.CELAB);
+})(window.SAGETI);

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Importação de planilha (.xlsx / .xls / .csv)
+   SAGE-TI — Importação de planilha (.xlsx / .xls / .csv)
    --------------------------------------------------------------------------
    Fluxo em três passos, sem gravar nada até a confirmação:
      1. Arquivo   — upload ou arrastar; escolha da aba da planilha.
@@ -9,11 +9,11 @@
    Só então o botão "Importar" grava.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
 
   /* ---------- Campos aceitos e sinônimos de cabeçalho -----------------------
      `apelidos` são comparados sem acento nem caixa, então "Tombo Novo",
@@ -224,10 +224,10 @@
       });
       var wb = window.XLSX.utils.book_new();
       window.XLSX.utils.book_append_sheet(wb, ws, 'Inventário');
-      window.XLSX.writeFile(wb, 'CELAB_modelo_importacao.xlsx');
+      window.XLSX.writeFile(wb, SAGETI.APP.nome + '_modelo_importacao.xlsx');
     } else {
       var csv = cabecalho.join(';') + '\r\n' + exemplo.join(';');
-      U.baixarArquivo('﻿' + csv, 'CELAB_modelo_importacao.csv', 'text/csv;charset=utf-8');
+      U.baixarArquivo('﻿' + csv, SAGETI.APP.nome + '_modelo_importacao.csv', 'text/csv;charset=utf-8');
     }
     UI.toast('success', 'Modelo gerado',
       'Preencha as colunas e importe. Colunas em branco podem ser removidas.');
@@ -236,7 +236,7 @@
   /* ---------- Interface ----------------------------------------------------- */
 
   function abrir() {
-    if (!CELAB.auth.permissao('podeImportar')) {
+    if (!SAGETI.auth.permissao('podeImportar')) {
       return UI.toast('warn', 'Sem permissão', 'Seu perfil não pode importar dados.');
     }
 
@@ -492,7 +492,7 @@
           'identifica cada equipamento.');
       }
       ctx.linhas = montarLinhas(ctx.porAba[ctx.aba] || [], ctx.mapa, ctx.linhaCabecalho);
-      ctx.simulacao = CELAB.store.importarLinhas(ctx.linhas, {
+      ctx.simulacao = SAGETI.store.importarLinhas(ctx.linhas, {
         simular: true,
         criarOpcoes: ctx.criarOpcoes,
         atualizarExistentes: ctx.atualizarExistentes
@@ -585,7 +585,7 @@
 
       // Cede um quadro para o botão repintar antes do trabalho pesado.
       setTimeout(function () {
-        var rel = CELAB.store.importarLinhas(ctx.linhas, {
+        var rel = SAGETI.store.importarLinhas(ctx.linhas, {
           criarOpcoes: ctx.criarOpcoes,
           atualizarExistentes: ctx.atualizarExistentes
         });
@@ -599,7 +599,7 @@
           UI.toast('info', rel.opcoesCriadas.length + ' opção(ões) cadastrada(s)',
             'Novos valores entraram nas listas. Revise em Configurações → Listas.', 9000);
         }
-        if (CELAB.app && CELAB.app.navegar) CELAB.app.navegar('estoque');
+        if (SAGETI.app && SAGETI.app.navegar) SAGETI.app.navegar('estoque');
       }, 40);
     }
 
@@ -607,7 +607,7 @@
     return ref;
   }
 
-  CELAB.importar = {
+  SAGETI.importar = {
     abrir: abrir,
     baixarModelo: baixarModelo,
     CAMPOS: CAMPOS,
@@ -619,4 +619,4 @@
     _montarLinhas: montarLinhas
   };
 
-})(window.CELAB);
+})(window.SAGETI);

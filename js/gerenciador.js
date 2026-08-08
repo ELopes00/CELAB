@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CELAB — Gerenciador de listas
+   SAGE-TI — Gerenciador de listas
    --------------------------------------------------------------------------
    Interface para criar, renomear, excluir e restaurar as opções de qualquer
    dropdown do sistema. Aparece de duas formas:
@@ -8,15 +8,15 @@
      · painel completo, na aba Configurações.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
-  var UI = CELAB.ui;
-  var U = CELAB.util;
-  var L = CELAB.listas;
+  var UI = SAGETI.ui;
+  var U = SAGETI.util;
+  var L = SAGETI.listas;
 
   function catalogo(chave) {
-    return CELAB.CATALOGO_LISTAS.find(function (c) { return c.chave === chave; }) ||
+    return SAGETI.CATALOGO_LISTAS.find(function (c) { return c.chave === chave; }) ||
       { chave: chave, rotulo: chave, tipo: 'texto', icone: 'listas', ajuda: '' };
   }
 
@@ -65,7 +65,7 @@
         '<div class="field">' +
           '<label for="nova-tom">Cor</label>' +
           '<select class="select" id="nova-tom">' +
-            UI.opcoes(CELAB.TONS.map(function (t) { return { valor: t.valor, rotulo: t.rotulo }; }), 'neutral', false) +
+            UI.opcoes(SAGETI.TONS.map(function (t) { return { valor: t.valor, rotulo: t.rotulo }; }), 'neutral', false) +
           '</select>' +
         '</div>' +
         '<div class="field">' +
@@ -273,7 +273,7 @@
         '<div class="field">' +
           '<label for="op-tom">Cor</label>' +
           '<select class="select" id="op-tom">' +
-            UI.opcoes(CELAB.TONS.map(function (t) { return { valor: t.valor, rotulo: t.rotulo }; }),
+            UI.opcoes(SAGETI.TONS.map(function (t) { return { valor: t.valor, rotulo: t.rotulo }; }),
               item.tom, false) + '</select>' +
         '</div>' +
         '<div class="field">' +
@@ -401,7 +401,7 @@
    * @param {string} campoId    id do <select> que deve absorver a novidade
    */
   function abrirModal(chave, campoId) {
-    if (!CELAB.auth.permissao('podeGerenciarListas')) {
+    if (!SAGETI.auth.permissao('podeGerenciarListas')) {
       return UI.toast('warn', 'Sem permissão', 'Seu perfil não pode gerenciar listas.');
     }
 
@@ -449,7 +449,7 @@
     });
   }
 
-  CELAB.gerenciador = {
+  SAGETI.gerenciador = {
     painelHTML: painelHTML,
     ligar: ligar,
     abrirModal: abrirModal,
@@ -458,4 +458,4 @@
     catalogo: catalogo
   };
 
-})(window.CELAB);
+})(window.SAGETI);

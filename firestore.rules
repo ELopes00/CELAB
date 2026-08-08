@@ -1,0 +1,81 @@
+// ============================================================================
+// SAGE-TI — Regras de segurança do Firestore
+// ----------------------------------------------------------------------------
+// O app hoje guarda os dados em localStorage (veja js/store.js) — o
+// firebase.json deste repositório só cobre hospedagem estática, sem
+// Firestore ligado. Este arquivo é a referência pronta para o dia em que o
+// armazenamento migrar para o Firestore: o esquema de coleções abaixo
+// (equipamentos / movimentacoes / usuarios) espelha os campos que já existem
+// nos registros do store atual, para a migração ser só trocar a camada de
+// persistência, sem redesenhar o modelo de dados.
+//
+// Para habilitar: adicione ao firebase.json
+//   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" }
+// e publique com `firebase deploy --only firestore`.
+//
+// Perfis (espelham SAGETI.PERFIS em js/config.js):
+//   admin   — CRUD completo (é o único que pode excluir)
+//   tecnico — pode criar e ler; NUNCA pode excluir (nem alterar o próprio perfil)
+// ============================================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Perfil do usuário autenticado -----------------------------------
+    // Lido do próprio documento em /usuarios/{uid}, não de custom claims —
+    // assim o perfil pode ser gerenciado por um admin direto no Firestore,
+    // do mesmo jeito que o gerenciador de listas do app já funciona.
+    function perfilDoUsuario() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.perfil;
+    }
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function ehAdmin() {
+      return autenticado() && perfilDoUsuario() == 'admin';
+    }
+
+    // tecnico e admin podem criar/editar; leitura pura (perfil "leitura") não.
+    function podeEscrever() {
+      return autenticado() && perfilDoUsuario() in ['admin', 'tecnico'];
+    }
+
+    // ---- usuarios: cada um lê o próprio perfil; só admin gerencia contas --
+    match /usuarios/{uid} {
+      allow read: if autenticado() && (request.auth.uid == uid || ehAdmin());
+      allow create, update, delete: if ehAdmin();
+    }
+
+    // ---- equipamentos: inventário do estoque -------------------------------
+    // Campos usados pelos índices (status, dataEntrada, dataSaida, noLaboratorio)
+    // são os mesmos já gravados por SAGETI.store.registrarEntrada/registrarSaida.
+    match /equipamentos/{id} {
+      allow read: if autenticado();
+      allow create: if podeEscrever();
+      allow update: if podeEscrever();
+      allow delete: if ehAdmin(); // técnico é bloqueado — regra central do requisito de RBAC
+    }
+
+    // ---- movimentacoes: histórico de entrada/saída (nunca é editado/apagado) --
+    match /movimentacoes/{id} {
+      allow read: if autenticado();
+      allow create: if podeEscrever();
+      allow update, delete: if ehAdmin(); // histórico só é corrigido por admin, em último caso
+    }
+
+    // ---- listas: status, TTR, setores, técnicos, modelos etc. (gerenciador) --
+    match /listas/{chave} {
+      allow read: if autenticado();
+      allow write: if podeEscrever(); // tecnico também gerencia listas (SAGETI.PERFIS.tecnico.podeGerenciarListas)
+    }
+
+    // Qualquer coleção fora do esquema acima fica fechada por padrão.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

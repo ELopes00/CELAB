@@ -7,11 +7,11 @@ Depois, troque o conteúdo de dois pontos do código:
 
 1) Tela de login — js/pages/login.js, procure por 'logo-slot__box':
 
-   '<div class="logo-slot__box" id="logo-slot">CELAB</div>'
+   '<div class="logo-slot__box" id="logo-slot">SAGE-TI</div>'
 
    vira:
 
-   '<div class="logo-slot__box"><img src="assets/logo.png" alt="Logo CELAB"></div>'
+   '<div class="logo-slot__box"><img src="assets/logo.png" alt="Logo SAGE-TI"></div>'
 
 2) Barra lateral — js/app.js, procure por 'sidebar__logo':
 

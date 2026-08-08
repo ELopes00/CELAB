@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-CELAB — Servidor HTTP para a intranet.
+SAGE-TI — Servidor HTTP para a intranet.
 
-Publica a pasta do CELAB na rede local. Requer apenas a biblioteca padrão
+Publica a pasta do SAGE-TI na rede local. Requer apenas a biblioteca padrão
 do Python (testado em 3.13).
 
     python servidor.py
@@ -40,8 +40,8 @@ DIRETORIO = Path(__file__).resolve().parent
 # ==========================================================================
 
 
-class CelabHandler(http.server.SimpleHTTPRequestHandler):
-    """Servidor de arquivos estáticos ajustado para o CELAB."""
+class SageTiHandler(http.server.SimpleHTTPRequestHandler):
+    """Servidor de arquivos estáticos ajustado para o SAGE-TI."""
 
     # MIME types explícitos: alguns Windows têm o registro corrompido e
     # devolvem 'text/plain' para .js, o que faz o navegador recusar o script.
@@ -83,7 +83,7 @@ class CelabHandler(http.server.SimpleHTTPRequestHandler):
         self.log_message(formato, *args)
 
 
-class ServidorCelab(socketserver.ThreadingTCPServer):
+class ServidorSageTi(socketserver.ThreadingTCPServer):
     """
     ThreadingTCPServer: cada requisição em sua própria thread, para várias
     máquinas navegarem ao mesmo tempo sem uma travar a outra.
@@ -127,7 +127,7 @@ def banner(host: str, porta: int) -> None:
 
     print()
     print("  " + "=" * largura)
-    print("   CELAB — Controle de Estoque de Laboratório")
+    print("   SAGE-TI — Sistema de Ativos e Gestão de Estoque de Tecnologia da Informação")
     print("   servidor da intranet ativo")
     print("  " + "=" * largura)
     print(f"   Pasta servida : {DIRETORIO}")
@@ -144,7 +144,7 @@ def banner(host: str, porta: int) -> None:
     print("   Se outra máquina não abrir, libere a porta no firewall — uma vez,")
     print("   em um PowerShell como Administrador:")
     print()
-    print('     New-NetFirewallRule -DisplayName "CELAB 8080" -Direction Inbound `')
+    print('     New-NetFirewallRule -DisplayName "SAGE-TI 8080" -Direction Inbound `')
     print(f"       -Protocol TCP -LocalPort {porta} -Action Allow -Profile Private")
     print()
     print("   Ctrl+C encerra o servidor.")
@@ -154,7 +154,7 @@ def banner(host: str, porta: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Servidor HTTP do CELAB para a rede local.")
+        description="Servidor HTTP do SAGE-TI para a rede local.")
     parser.add_argument("--host", default=HOST,
                         help=f"endereço de escuta (padrão: {HOST})")
     parser.add_argument("--porta", type=int, default=PORT,
@@ -164,7 +164,7 @@ def main() -> int:
     verificar_pasta()
 
     try:
-        servidor = ServidorCelab((args.host, args.porta), CelabHandler)
+        servidor = ServidorSageTi((args.host, args.porta), SageTiHandler)
     except OSError as erro:
         print(f"\n  ERRO ao abrir {args.host}:{args.porta} — {erro}\n")
         if getattr(erro, "errno", None) in (48, 98, 10048):

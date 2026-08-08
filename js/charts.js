@@ -1,5 +1,5 @@
 ﻿/* ==========================================================================
-   CELAB — Camada de gráficos (Chart.js)
+   SAGE-TI — Camada de gráficos (Chart.js)
    --------------------------------------------------------------------------
    Decisões de forma e cor:
    · "Por tipo de equipamento" tem 14 classes possíveis -> BARRAS HORIZONTAIS
@@ -15,7 +15,7 @@
    selecionado — não uma inversão automática.
    ========================================================================== */
 
-(function (CELAB) {
+(function (SAGETI) {
   'use strict';
 
   var instancias = {};   // id do canvas -> Chart
@@ -123,9 +123,9 @@
     var box = canvas.parentElement;
     if (!box) return;
     destruir(canvas.id);
-    box.innerHTML = '<div class="chart-empty">' + CELAB.ui.icone(iconeNome, 34) +
-      '<div>' + CELAB.util.esc(texto) + '</div>' +
-      (complemento ? '<div style="font-size:11.5px">' + CELAB.util.esc(complemento) + '</div>' : '') +
+    box.innerHTML = '<div class="chart-empty">' + SAGETI.ui.icone(iconeNome, 34) +
+      '<div>' + SAGETI.util.esc(texto) + '</div>' +
+      (complemento ? '<div style="font-size:11.5px">' + SAGETI.util.esc(complemento) + '</div>' : '') +
       '</div>';
   }
 
@@ -235,7 +235,7 @@
             callbacks: {
               label: function (ctx) {
                 var pct = total ? Math.round(ctx.parsed.x / total * 100) : 0;
-                return ' ' + CELAB.util.numero(ctx.parsed.x) + ' un. · ' + pct + '% do recorte';
+                return ' ' + SAGETI.util.numero(ctx.parsed.x) + ' un. · ' + pct + '% do recorte';
               },
               afterLabel: function () {
                 return opcoes.aoClicar ? 'Clique para filtrar' : '';
@@ -285,7 +285,7 @@
           // Zerado ainda recebe o "0": a ausência é informação no drill-down.
           ctx.font = (v && !atenuado ? '600 ' : '400 ') + '11.5px ' + FONTE.family;
           ctx.fillStyle = atenuado || !v ? p.muted : p.secundario;
-          ctx.fillText(CELAB.util.numero(v), barra.x + 7, barra.y);
+          ctx.fillText(SAGETI.util.numero(v), barra.x + 7, barra.y);
         });
         ctx.restore();
       }
@@ -344,7 +344,7 @@
             callbacks: {
               label: function (ctx) {
                 var pct = total ? Math.round(ctx.parsed / total * 100) : 0;
-                return ' ' + CELAB.util.numero(ctx.parsed) + ' un. · ' + pct + '%';
+                return ' ' + SAGETI.util.numero(ctx.parsed) + ' un. · ' + pct + '%';
               },
               afterLabel: function (ctx) {
                 if (!opcoes.aoClicar) return '';
@@ -369,7 +369,7 @@
           ctx.textAlign = 'center';
           ctx.fillStyle = p.texto;
           ctx.font = '620 26px ' + FONTE.family;   // figuras proporcionais
-          ctx.fillText(CELAB.util.numero(destaque), cx, cy + 2);
+          ctx.fillText(SAGETI.util.numero(destaque), cx, cy + 2);
           ctx.fillStyle = p.muted;
           ctx.font = '11.5px ' + FONTE.family;
           ctx.fillText(sel ? String(sel).toLowerCase() : (opcoes.rotuloCentro || 'no laboratório'),
@@ -393,7 +393,7 @@
     if (!disponivel()) return semBiblioteca(canvas);
 
     var p = paleta();
-    var rotulos = serie.labels.map(function (iso) { return CELAB.util.dataBR(iso).slice(0, 5); });
+    var rotulos = serie.labels.map(function (iso) { return SAGETI.util.dataBR(iso).slice(0, 5); });
 
     instancias[canvasId] = new window.Chart(canvas.getContext('2d'), {
       type: 'line',
@@ -439,7 +439,7 @@
             callbacks: {
               title: function (itens) {
                 var i = itens[0].dataIndex;
-                return CELAB.util.dataBR(serie.labels[i]);
+                return SAGETI.util.dataBR(serie.labels[i]);
               },
               label: function (ctx) { return ' ' + ctx.dataset.label + ': ' + ctx.parsed.y; }
             }
@@ -529,7 +529,7 @@
           tooltip: Object.assign(tooltipBase(p), {
             callbacks: {
               title: function (ctx) { return completos[ctx[0].dataIndex]; },
-              label: function (ctx) { return ' ' + CELAB.util.numero(ctx.parsed.x) + ' un.'; }
+              label: function (ctx) { return ' ' + SAGETI.util.numero(ctx.parsed.x) + ' un.'; }
             }
           })
         },
@@ -559,8 +559,8 @@
     return itens.map(function (i) {
       return '<span class="chart-legend__item">' +
         '<span class="chart-legend__swatch" style="background:' + i.cor + '"></span>' +
-        CELAB.util.esc(i.rotulo) +
-        (i.valor != null ? ' <span class="chart-legend__val">' + CELAB.util.numero(i.valor) + '</span>' : '') +
+        SAGETI.util.esc(i.rotulo) +
+        (i.valor != null ? ' <span class="chart-legend__val">' + SAGETI.util.numero(i.valor) + '</span>' : '') +
         '</span>';
     }).join('');
   }
@@ -568,16 +568,16 @@
   /** Tabela equivalente ao gráfico — todo valor é alcançável sem hover. */
   function tabelaHTML(colunas, linhas) {
     var html = '<table class="chart-table"><thead><tr>';
-    colunas.forEach(function (c) { html += '<th>' + CELAB.util.esc(c) + '</th>'; });
+    colunas.forEach(function (c) { html += '<th>' + SAGETI.util.esc(c) + '</th>'; });
     html += '</tr></thead><tbody>';
     linhas.forEach(function (l) {
       html += '<tr>';
       l.forEach(function (celula, i) {
         if (i === 0 && typeof celula === 'object') {
           html += '<td><span class="chart-table__key" style="background:' + celula.cor + '"></span>' +
-            CELAB.util.esc(celula.texto) + '</td>';
+            SAGETI.util.esc(celula.texto) + '</td>';
         } else {
-          html += '<td>' + CELAB.util.esc(celula) + '</td>';
+          html += '<td>' + SAGETI.util.esc(celula) + '</td>';
         }
       });
       html += '</tr>';
@@ -603,7 +603,7 @@
     construtores = {};
   }
 
-  CELAB.charts = {
+  SAGETI.charts = {
     barrasPorTipo: barrasPorTipo,
     donutStatus: donutStatus,
     linhasMovimentacao: linhasMovimentacao,
@@ -616,4 +616,4 @@
     disponivel: disponivel
   };
 
-})(window.CELAB);
+})(window.SAGETI);
