@@ -5,6 +5,11 @@
    clássico do resto do projeto — sem bundler, sem import/export ES.
    A apiKey abaixo NÃO é segredo: ela só identifica o projeto: quem pode ler
    e escrever de fato é decidido pelas regras em firestore.rules.
+
+   MODO EMULADOR: se `window.SAGETI_USE_EMULATOR` estiver setado (true) ANTES
+   deste script carregar, liga no Firestore/Auth emulators locais em vez do
+   projeto de produção — usado só por tests/autoteste.html, nunca pelo
+   index.html publicado. Assim os testes nunca tocam dados reais.
    ========================================================================== */
 
 window.SAGETI = window.SAGETI || {};
@@ -22,11 +27,14 @@ window.SAGETI = window.SAGETI || {};
   };
 
   var app = firebase.initializeApp(config);
+  var auth = firebase.auth();
+  var db = firebase.firestore();
 
-  SAGETI.fb = {
-    app: app,
-    auth: firebase.auth(),
-    db: firebase.firestore()
-  };
+  if (window.SAGETI_USE_EMULATOR) {
+    auth.useEmulator('http://localhost:9099', { disableWarnings: true });
+    db.useEmulator('localhost', 8090);
+  }
+
+  SAGETI.fb = { app: app, auth: auth, db: db };
 
 })(window.SAGETI);

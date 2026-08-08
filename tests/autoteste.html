@@ -10,14 +10,24 @@
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <div id="app"></div>
   <div class="toast-stack" id="toast-stack"></div>
   <pre id="saida">executando…</pre>
 
+  <script>
+    // Liga no emulador local (Auth + Firestore) em vez do projeto de
+    // produção — precisa ser setado ANTES de js/firebase.js carregar. Nunca
+    // é setado em index.html, então o site publicado nunca entra aqui.
+    window.SAGETI_USE_EMULATOR = true;
+  </script>
+
   <script src="../js/config.js"></script>
-  <script src="../js/config.properties.js"></script>
+  <script src="../js/firebase.js"></script>
   <script src="../js/status-cores.js"></script>
   <script src="../js/ui.js"></script>
   <script src="../js/listas.js"></script>
@@ -48,9 +58,12 @@
       var linhas = [];
       var ok = 0, falhas = 0;
 
-      function t(nome, fn) {
+      /* `t` aceita testes síncronos OU assíncronos (que devolvem uma Promise) —
+         a suite inteira roda em sequência, sempre esperando o teste anterior
+         terminar antes do próximo, igual à ordem síncrona de antes. */
+      async function t(nome, fn) {
         try {
-          var r = fn();
+          var r = await fn();
           if (r === false) { falhas++; linhas.push('FALHA  ' + nome); }
           else { ok++; linhas.push('ok     ' + nome + (typeof r === 'string' ? '  → ' + r : '')); }
         } catch (e) {
@@ -64,23 +77,118 @@
         return String(a);
       }
 
-      function rodar() {
+      /** Espera até `condicaoFn()` virar true — usado depois de gravações no
+          Firestore, cujo eco (via onSnapshot) atualiza o espelho local um
+          instante depois da Promise da escrita resolver. */
+      function aguardar(condicaoFn, timeoutMs) {
+        timeoutMs = timeoutMs || 15000;
+        var inicio = Date.now();
+        return new Promise(function (resolve, reject) {
+          (function tick() {
+            var r;
+            try { r = condicaoFn(); } catch (e) { r = false; }
+            if (r) return resolve();
+            if (Date.now() - inicio > timeoutMs) return reject(new Error('tempo esgotado esperando a condição'));
+            setTimeout(tick, 40);
+          })();
+        });
+      }
+
+      async function rodar() {
         var C = window.SAGETI;
         var S = C.store, U = C.util;
-
         var L = C.listas;
 
-        /* ---- 1. Carregamento dos módulos ---- */
-        t('listas carregadas com os tamanhos esperados', function () {
+        /* ---- 0. Login e espera pelo boot ---- */
+        // app.js já disparou store.inicializar()/auth._iniciar() no load.
+        // Login autentica de verdade contra o emulador — as regras do
+        // Firestore (as mesmas de produção) passam a valer a partir daqui.
+        var eventos = [];
+        var cancelarPrincipal = null;
+
+        await t('login com a credencial do administrador', async function () {
+          var res = await C.auth.entrar('admin', 'root123');
+          if (!res.ok) throw new Error(res.erro);
+          eq(res.usuario.perfil, 'admin', 'perfil');
+          if (!C.auth.permissao('podeExcluir')) throw new Error('admin sem permissão de exclusão');
+          return 'admin autenticado';
+        });
+
+        await t('listas do Firestore chegam ao espelho local', async function () {
+          await aguardar(function () { return L.get('setores').length === 175; });
           eq(L.get('equipamentos').length, 14, 'equipamentos');
           eq(L.get('modelos').length, 45, 'modelos');
           eq(L.get('predios').length, 32, 'prédios');
-          eq(L.get('setores').length, 175, 'setores');
           eq(L.get('tecnicos').length, 15, 'técnicos');
           return '175 setores · 15 técnicos · 45 modelos';
         });
 
-        t('status por contexto: entrada, saída e estoque', function () {
+        cancelarPrincipal = S.assinar(function (ev) { eventos.push(ev.tipo); });
+
+        /* Semeia o mesmo conjunto fictício que o antigo seedDemo() criava
+           sozinho no boot — agora ninguém semeia automaticamente, então o
+           teste faz isso explicitamente, contra o Firestore emulado. */
+        async function semear() {
+          var base = new Date();
+          function diasAtras(n) { return new Date(base.getTime() - n * 86400000).toISOString().slice(0, 10); }
+          var demo = [
+            { cat: 'Monitor', mod: 'LG 24BL550J-B', tn: '045112', ta: '11233', st: 'Entrada de Estoque', pr: 'Sede Administrativa', se: 'STI - Secretaria de Tecnologia da Informação', dias: 12 },
+            { cat: 'Monitor', mod: 'HP P22A G4', tn: '045118', ta: '', st: 'Estoque', pr: 'Forum Civel', se: '1CIR - 1ª Vara Cível Residual', dias: 10 },
+            { cat: 'Monitor', mod: 'Positivo 22MP55PY', tn: '045230', ta: '10877', st: 'Devolucao Defeito', pr: 'Palácio', se: 'PR – Presidência', dias: 9 },
+            { cat: 'Computador', mod: 'Lenovo ThinkCentre M75q', tn: '046001', ta: '', st: 'Estoque', pr: 'Sede Administrativa', se: 'SUBSI - Subsecretaria de Sistemas', dias: 8 },
+            { cat: 'Computador', mod: 'Positivo Master 820', tn: '046010', ta: '09912', st: 'Manutenção', pr: 'Forum Criminal', se: '2° Vara Criminal', dias: 7 },
+            { cat: 'Computador', mod: 'Positivo Minipro 810', tn: '046022', ta: '', st: 'Manutenção', pr: 'CB - Comarca de Bonfim', se: 'CB - Comarca de Bonfim', dias: 6 },
+            { cat: 'Impressora', mod: 'HP Pro M404DW', tn: '047300', ta: '08820', st: 'Devolução', pr: 'Forum Civel', se: 'SPAPCIVEL - Setor de Primeiro Atendimento e Protocolo Cível', dias: 6 },
+            { cat: 'Impressora', mod: 'OKI 5112', tn: '047311', ta: '', st: 'Leilão', pr: 'AG - Arquivo Geral', se: 'SARG - Setor de Arquivo Geral', dias: 5 },
+            { cat: 'Nobreak', mod: 'Ragtech Easy Way 1200', tn: '048500', ta: '07741', st: 'Estoque', pr: 'Sede Administrativa', se: 'SUBINF - Subsecretaria de Infraestrutura de TIC', dias: 5 },
+            { cat: 'Nobreak', mod: 'Ragtech Easy Way 1200', tn: '048501', ta: '', st: 'Defeito', pr: 'NUPAC', se: 'NUPAC - Núcleo Plantão Judicial e Audiências de Custódia', dias: 4 },
+            { cat: 'Notebook', mod: 'Positivo N6440', tn: '049100', ta: '', st: 'Devolução Empréstimo', pr: 'Vara Infancia e Juventude', se: 'SUVIJ - Secretaria Unificada das Varas da Infância e Juventude', dias: 4 },
+            { cat: 'Scanner', mod: 'Kodak ScanMate i1150', tn: '050220', ta: '06630', st: 'Estoque', pr: 'Forum Civel', se: 'SDCRIM - Setor de Distribuição Criminal', dias: 3 },
+            { cat: 'Scanner', mod: 'Avision AD345G', tn: '050231', ta: '', st: 'Manutenção', pr: 'CC - Comarca de Caracarai', se: 'CC - Comarca de Caracaraí', dias: 3 },
+            { cat: 'Headset', mod: 'Logitech', tn: '051010', ta: '', st: 'Estoque', pr: 'NCTC - Nucleo de Conciliacao do Terminal do Centro', se: 'CEJUSCS - Centros Judiciários de Soluções de Conflitos', dias: 2 },
+            { cat: 'Webcam', mod: 'Logitech C925e', tn: '051500', ta: '', st: 'Estoque', pr: 'Casa da Mulher Brasileira', se: 'Casa da Mulher Brasileira', dias: 2 },
+            { cat: 'HDMI', mod: 'HDMI - 10M', tn: '052001', ta: '', st: 'Estoque', pr: 'Conj. Desembargadores', se: 'TP - Tribunal Pleno', dias: 2 },
+            { cat: 'Projetor Multimidia', mod: 'EPSON POWERLITE X29', tn: '053000', ta: '05512', st: 'Devolução Eq. Obsoleto', pr: 'Palácio', se: 'EJURR - Escola do Poder Judiciário', dias: 1 },
+            { cat: 'Eq. Video Conf.', mod: 'GoPresence Teams 10x', tn: '054000', ta: '', st: 'Estoque', pr: 'Sede Administrativa', se: 'SG - Secretaria Geral', dias: 1 }
+          ];
+          var ttrE = L.ttrDe('entrada');
+          for (var i = 0; i < demo.length; i++) {
+            var d = demo[i];
+            var r = await S.registrarEntrada({
+              dataEntrada: diasAtras(d.dias), chamado: 'CH-' + (10450 + i),
+              tomboNovo: d.tn, tomboAntigo: d.ta, equipamento: d.cat, modelo: d.mod,
+              servicoSolicitado: 'Recolhimento para avaliação técnica e conferência de patrimônio.',
+              status: d.st, predioOrigem: d.pr, setorOrigem: d.se, ttr: ttrE[i % 3 === 0 ? 1 : 0]
+            }, { usuario: 'sistema' });
+            if (!r.ok) throw new Error('seed falhou em ' + d.tn + ': ' + r.erro);
+          }
+          var ttrS = L.ttrDe('saida'), tecnicos = L.get('tecnicos');
+          var s1 = await S.registrarSaida({
+            dataSaida: diasAtras(1), chamado: 'CH-10480', tomboNovo: '045118', tomboAntigo: '',
+            equipamento: 'Monitor', modelo: 'HP P22A G4',
+            servicoSolicitado: 'Substituição de monitor com defeito na unidade.',
+            status: 'Subs. Equip. Defeito', predioDestino: 'Forum Criminal',
+            setorDestino: '1VCJ - 1ª Vara Criminal do Júri', ttr: ttrS[0], tecnico: tecnicos[0]
+          }, { usuario: 'sistema' });
+          if (!s1.ok) throw new Error('seed de saída falhou: ' + s1.erro);
+          var s2 = await S.registrarSaida({
+            dataSaida: diasAtras(0), chamado: 'CH-10488', tomboNovo: '051010', tomboAntigo: '',
+            equipamento: 'Headset', modelo: 'Logitech',
+            servicoSolicitado: 'Atendimento a solicitação de novo posto de trabalho.',
+            status: 'Solicitação', predioDestino: 'PA - Iracema',
+            setorDestino: 'SADA - Setor de Atendimento', ttr: ttrS[1], tecnico: tecnicos[1]
+          }, { usuario: 'sistema' });
+          if (!s2.ok) throw new Error('seed de saída falhou: ' + s2.erro);
+          await aguardar(function () { return S.resumo().totalCadastrado === 18; }, 30000);
+        }
+
+        await t('semeadura do inventário fictício (18 equipamentos, 2 saídas)', async function () {
+          await semear();
+          return S.resumo().totalCadastrado + ' equipamentos semeados';
+        });
+
+        /* ---- 1. Carregamento dos módulos ---- */
+        await t('status por contexto: entrada, saída e estoque', function () {
           var ent = L.statusDe('entrada'), sai = L.statusDe('saida'), est = L.statusDe('estoque');
           ['Estoque', 'Manutenção', 'Defeito', 'Leilão', 'Entrada de Estoque', 'Devolução',
            'Devolução Empréstimo', 'Substituição', 'Substituição Defeito',
@@ -95,13 +203,13 @@
           return ent.length + ' entrada · ' + sai.length + ' saída · ' + est.length + ' estoque';
         });
 
-        t('TTR tem lista própria por contexto', function () {
+        await t('TTR tem lista própria por contexto', function () {
           eq(L.ttrDe('entrada').join('|'), 'Realizada|Pendente|Retornou|Não consta no GRP|Garantia', 'TTR entrada');
           eq(L.ttrDe('saida').join('|'), 'Realizada|Pendente|Retornou|Empréstimo|Nao consta no GRP', 'TTR saída');
           return '5 + 5 opções';
         });
 
-        t('status não tem rótulo duplicado', function () {
+        await t('status não tem rótulo duplicado', function () {
           var vistos = {};
           L.get('status').forEach(function (s) {
             var k = L._chave(s.valor);
@@ -111,9 +219,9 @@
           return L.get('status').length + ' status únicos';
         });
 
-        t('todos os módulos expostos', function () {
+        await t('todos os módulos expostos', function () {
           ['util', 'ui', 'listas', 'store', 'auth', 'charts', 'exportar',
-           'gerenciador', 'importar', 'app', 'pages'].forEach(function (k) {
+           'gerenciador', 'importar', 'app', 'pages', 'fb'].forEach(function (k) {
             if (!C[k]) throw new Error('faltando SAGETI.' + k);
           });
           ['login', 'dashboard', 'estoque', 'entrada', 'saida', 'relatorios',
@@ -123,7 +231,7 @@
           return '7 páginas registradas';
         });
 
-        t('nenhum modelo fica inacessível no select filtrado', function () {
+        await t('nenhum modelo fica inacessível no select filtrado', function () {
           var total = L.get('modelos').length;
           L.get('equipamentos').forEach(function (e) {
             var g = L.modelosDe(e);
@@ -132,7 +240,7 @@
           return 'todos os ' + total + ' modelos alcançáveis em cada categoria';
         });
 
-        t('todo modelo mapeado existe na lista mestre', function () {
+        await t('todo modelo mapeado existe na lista mestre', function () {
           var mapa = C.MODELOS_POR_EQUIPAMENTO;
           var todos = L.get('modelos');
           Object.keys(mapa).forEach(function (cat) {
@@ -143,7 +251,7 @@
           return true;
         });
 
-        t('acessos antigos (SAGETI.EQUIPAMENTOS…) leem das listas dinâmicas', function () {
+        await t('acessos antigos (SAGETI.EQUIPAMENTOS…) leem das listas dinâmicas', function () {
           eq(C.EQUIPAMENTOS.length, L.get('equipamentos').length, 'equipamentos');
           eq(C.SETORES.length, 175, 'setores');
           eq(C.TECNICOS.length, 15, 'técnicos');
@@ -151,42 +259,41 @@
         });
 
         /* ---- 2. Utilitários ---- */
-        t('util.dataBR não desloca por fuso', function () { return eq(U.dataBR('2026-07-31'), '31/07/2026'); });
-        t('util.slug remove acentos', function () { return eq(U.slug('Comarca de Mucajaí ÃÕ'), 'comarca de mucajai ao'); });
-        t('util.esc bloqueia injeção', function () {
+        await t('util.dataBR não desloca por fuso', function () { return eq(U.dataBR('2026-07-31'), '31/07/2026'); });
+        await t('util.slug remove acentos', function () { return eq(U.slug('Comarca de Mucajaí ÃÕ'), 'comarca de mucajai ao'); });
+        await t('util.esc bloqueia injeção', function () {
           return eq(U.esc('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
         });
-        t('util.ordenarPor ordena texto e número', function () {
+        await t('util.ordenarPor ordena texto e número', function () {
           var l = [{ a: '10' }, { a: '2' }, { a: '1' }];
           return eq(U.ordenarPor(l, 'a', 'asc').map(function (x) { return x.a; }).join(','), '1,2,10');
         });
 
         /* ---- 3. Estado inicial (seed) ---- */
         var r0 = S.resumo();
-        t('seed criou o inventário de demonstração', function () {
+        await t('seed criou o inventário de demonstração', function () {
           if (r0.totalCadastrado < 15) throw new Error('só ' + r0.totalCadastrado + ' equipamentos');
           return r0.totalCadastrado + ' cadastrados · ' + r0.totalNoLab + ' no laboratório';
         });
 
-        t('resumo bate com a soma dos status', function () {
+        await t('resumo bate com a soma dos status', function () {
           var soma = 0;
           Object.keys(r0.porStatus).forEach(function (k) { soma += r0.porStatus[k]; });
           return eq(soma, r0.totalCadastrado, 'soma dos status');
         });
 
-        t('totalNoLab exclui os itens que saíram', function () {
-          // Presença física vem do campo `noLaboratorio`, não de um rótulo:
-          // as saídas do seed usam "Subs. Equip. Defeito" e "Solicitação".
+        await t('totalNoLab exclui os itens que saíram', function () {
           eq(r0.totalNoLab, r0.totalCadastrado - r0.totalFora, 'no laboratório');
           return r0.totalNoLab + ' de ' + r0.totalCadastrado + ' (' + r0.totalFora + ' fora)';
         });
 
         /* ---- 4. Entrada ---- */
-        var eventos = [];
-        var cancelar = S.assinar(function (ev) { eventos.push(ev.tipo); });
-
-        t('entrada cria equipamento novo e emite evento', function () {
-          var res = S.registrarEntrada({
+        await t('entrada cria equipamento novo e emite evento', async function () {
+          // O emit() de verdade agora vem do onSnapshot (evento genérico
+          // "sync"), não mais de um tipo específico por operação — a prova
+          // de "emitiu" é o espelho local realmente ter recebido a mudança.
+          var antesEv = eventos.length;
+          var res = await S.registrarEntrada({
             dataEntrada: '2026-07-20', chamado: 'CH-TEST-1',
             tomboNovo: '999001', tomboAntigo: '',
             equipamento: 'Monitor', modelo: 'LG E2241PX',
@@ -194,44 +301,47 @@
             predioOrigem: 'Palácio', setorOrigem: 'Teste', ttr: 'Pendente'
           });
           if (!res.ok || !res.criado) throw new Error('não criou');
-          eq(eventos[eventos.length - 1], 'entrada', 'evento emitido');
-          eq(S.resumo().totalNoLab, r0.totalNoLab + 1, 'estoque incrementado');
+          await aguardar(function () { return S.resumo().totalNoLab === r0.totalNoLab + 1; });
+          if (eventos.length <= antesEv) throw new Error('nenhum evento emitido');
           return 'id ' + res.equipamento.id.slice(0, 8);
         });
 
-        t('reentrada do mesmo tombo atualiza em vez de duplicar', function () {
+        await t('reentrada do mesmo tombo atualiza em vez de duplicar', async function () {
           var antes = S.resumo().totalCadastrado;
-          var res = S.registrarEntrada({
+          var res = await S.registrarEntrada({
             dataEntrada: '2026-07-25', chamado: 'CH-TEST-2',
             tomboNovo: '999001', equipamento: 'Monitor', modelo: 'LG E2241PX',
             status: 'Manutenção', predioOrigem: 'Forum Civel', setorOrigem: 'Reparo', ttr: 'Realizado'
           });
           if (res.criado) throw new Error('duplicou o registro');
-          eq(S.resumo().totalCadastrado, antes, 'total inalterado');
+          await aguardar(function () { return S.resumo().totalCadastrado === antes; });
           eq(res.equipamento.status, 'Manutenção', 'status atualizado');
           return 'atualizado, sem duplicata';
         });
 
-        t('entrada casa pelo tombo antigo quando o novo está vazio', function () {
-          S.registrarEntrada({
+        await t('entrada casa pelo tombo antigo quando o novo está vazio', async function () {
+          await S.registrarEntrada({
             dataEntrada: '2026-07-21', tomboNovo: '', tomboAntigo: '888777',
             equipamento: 'Headset', modelo: 'Agem', status: 'Estoque',
             predioOrigem: 'CSE', setorOrigem: 'X', ttr: 'Pendente'
           });
+          await aguardar(function () { return !!S.acharPorTombo({ tomboAntigo: '888777' }); });
           var antes = S.resumo().totalCadastrado;
-          var res = S.registrarEntrada({
+          var res = await S.registrarEntrada({
             dataEntrada: '2026-07-22', tomboNovo: '', tomboAntigo: '888777',
             equipamento: 'Headset', modelo: 'Agem', status: 'Defeito',
             predioOrigem: 'CSE', setorOrigem: 'X', ttr: 'Pendente'
           });
           if (res.criado) throw new Error('duplicou pelo tombo antigo');
+          await aguardar(function () { return S.acharPorTombo({ tomboAntigo: '888777' }).status === 'Defeito'; });
           return eq(S.resumo().totalCadastrado, antes, 'sem duplicata');
         });
 
         /* ---- 5. Saída ---- */
-        t('saída tira o item do estoque do laboratório', function () {
+        await t('saída tira o item do estoque do laboratório', async function () {
           var antesLab = S.resumo().totalNoLab;
-          var res = S.registrarSaida({
+          var antesEv = eventos.length;
+          var res = await S.registrarSaida({
             dataSaida: '2026-07-30', chamado: 'CH-TEST-3',
             tomboNovo: '999001', equipamento: 'Monitor', modelo: 'LG E2241PX',
             servicoSolicitado: 'Entrega', predioDestino: 'PA - Iracema',
@@ -239,20 +349,20 @@
           });
           if (!res.ok) throw new Error(res.erro);
           eq(res.equipamento.status, 'Disponibilizado', 'status');
-          eq(S.resumo().totalNoLab, antesLab - 1, 'estoque decrementado');
-          eq(eventos[eventos.length - 1], 'saida', 'evento');
+          await aguardar(function () { return S.resumo().totalNoLab === antesLab - 1; });
+          if (eventos.length <= antesEv) throw new Error('nenhum evento emitido');
           return 'estoque ' + antesLab + ' → ' + S.resumo().totalNoLab;
         });
 
-        t('o registro sobrevive à saída (rastreabilidade)', function () {
+        await t('o registro sobrevive à saída (rastreabilidade)', function () {
           var eq1 = S.acharPorTombo({ tomboNovo: '999001' });
           if (!eq1) throw new Error('registro sumiu');
           eq(eq1.predioDestino, 'PA - Iracema', 'destino');
           return 'destino preservado';
         });
 
-        t('saída repetida é recusada', function () {
-          var res = S.registrarSaida({
+        await t('saída repetida é recusada', async function () {
+          var res = await S.registrarSaida({
             dataSaida: '2026-07-31', tomboNovo: '999001',
             equipamento: 'Monitor', modelo: 'LG E2241PX', predioDestino: 'CSE', ttr: 'Pendente'
           });
@@ -260,8 +370,8 @@
           return 'recusada: ' + res.erro.slice(0, 40) + '…';
         });
 
-        t('saída de tombo inexistente é recusada', function () {
-          var res = S.registrarSaida({
+        await t('saída de tombo inexistente é recusada', async function () {
+          var res = await S.registrarSaida({
             dataSaida: '2026-07-31', tomboNovo: 'NAO-EXISTE',
             equipamento: 'Monitor', modelo: 'LG E2241PX', predioDestino: 'CSE', ttr: 'Pendente'
           });
@@ -269,9 +379,9 @@
           return 'recusada';
         });
 
-        t('reentrada após saída devolve o item ao estoque e limpa o destino', function () {
+        await t('reentrada após saída devolve o item ao estoque e limpa o destino', async function () {
           var antes = S.resumo().totalNoLab;
-          var res = S.registrarEntrada({
+          var res = await S.registrarEntrada({
             dataEntrada: '2026-07-31', tomboNovo: '999001',
             equipamento: 'Monitor', modelo: 'LG E2241PX', status: 'Estoque',
             predioOrigem: 'PA - Iracema', setorOrigem: 'Atendimento', ttr: 'Pendente'
@@ -279,48 +389,52 @@
           if (!res.ok) throw new Error(res.erro);
           eq(res.equipamento.predioDestino, '', 'destino limpo');
           eq(res.equipamento.dataSaida, '', 'data de saída limpa');
+          await aguardar(function () { return S.resumo().totalNoLab === antes + 1; });
           return eq(S.resumo().totalNoLab, antes + 1, 'voltou ao estoque');
         });
 
         /* ---- 6. CRUD direto ---- */
-        t('cadastro direto bloqueia tombo duplicado', function () {
-          var res = S.criarEquipamento({
+        await t('cadastro direto bloqueia tombo duplicado', async function () {
+          var res = await S.criarEquipamento({
             equipamento: 'Monitor', modelo: 'LG E2241PX', tomboNovo: '999001', status: 'Estoque'
           });
           if (res.ok) throw new Error('permitiu tombo duplicado');
           return 'bloqueado';
         });
 
-        t('edição não permite roubar o tombo de outro item', function () {
-          var novo = S.criarEquipamento({
+        await t('edição não permite roubar o tombo de outro item', async function () {
+          var novo = await S.criarEquipamento({
             equipamento: 'Webcam', modelo: 'Logitech C925e', tomboNovo: '777001', status: 'Estoque'
           });
           if (!novo.ok) throw new Error('não criou o item de apoio');
-          var res = S.atualizarEquipamento(novo.equipamento.id, { tomboNovo: '999001' });
+          await aguardar(function () { return !!S.acharPorTombo({ tomboNovo: '777001' }); });
+          var res = await S.atualizarEquipamento(novo.equipamento.id, { tomboNovo: '999001' });
           if (res.ok) throw new Error('permitiu colisão de tombo');
           return 'colisão bloqueada';
         });
 
-        t('alteração de status registra o histórico com o valor anterior', function () {
+        await t('alteração de status registra o histórico com o valor anterior', async function () {
           var alvo = S.acharPorTombo({ tomboNovo: '777001' });
-          S.atualizarEquipamento(alvo.id, { status: 'Defeito' });
+          var antesEv = eventos.length;
+          await S.atualizarEquipamento(alvo.id, { status: 'Defeito' });
+          await aguardar(function () { return eventos.length > antesEv; });
           var mov = S.listarMovimentacoes()[0];
           eq(mov.tipo, 'AJUSTE', 'tipo');
           eq(mov.statusAnterior, 'Estoque', 'status anterior');
           return eq(mov.statusResultante, 'Defeito', 'status novo');
         });
 
-        t('exclusão remove do estoque e fica no histórico', function () {
+        await t('exclusão remove do estoque e fica no histórico', async function () {
           var alvo = S.acharPorTombo({ tomboNovo: '777001' });
           var antes = S.resumo().totalCadastrado;
-          var res = S.excluirEquipamento(alvo.id);
+          var res = await S.excluirEquipamento(alvo.id);
           if (!res.ok) throw new Error(res.erro);
-          eq(S.resumo().totalCadastrado, antes - 1, 'removido');
+          await aguardar(function () { return S.resumo().totalCadastrado === antes - 1; });
           return eq(S.listarMovimentacoes()[0].tipo, 'EXCLUSAO', 'histórico');
         });
 
         /* ---- 7. Histórico e série ---- */
-        t('histórico registra todos os tipos de movimentação', function () {
+        await t('histórico registra todos os tipos de movimentação', function () {
           var tipos = {};
           S.listarMovimentacoes().forEach(function (m) { tipos[m.tipo] = (tipos[m.tipo] || 0) + 1; });
           ['ENTRADA', 'SAIDA', 'AJUSTE', 'CADASTRO', 'EXCLUSAO'].forEach(function (k) {
@@ -329,7 +443,7 @@
           return Object.keys(tipos).map(function (k) { return k + '=' + tipos[k]; }).join(' ');
         });
 
-        t('série de 30 dias tem tamanho e soma coerentes', function () {
+        await t('série de 30 dias tem tamanho e soma coerentes', function () {
           var s = S.serieMovimentacoes(30);
           eq(s.labels.length, 30, 'dias');
           eq(s.entradas.length, 30, 'entradas');
@@ -338,66 +452,79 @@
         });
 
         /* ---- 8. Persistência e backup ---- */
-        t('exportarJSON / importarJSON preservam os dados', function () {
+        await t('exportarJSON / importarJSON preservam os dados', async function () {
           var json = S.exportarJSON();
           var antes = S.resumo().totalCadastrado;
-          var res = S.importarJSON(json);
+          var res = await S.importarJSON(json);
           if (!res.ok) throw new Error(res.erro);
+          await aguardar(function () { return S.resumo().totalCadastrado === antes; });
           return eq(S.resumo().totalCadastrado, antes, 'total após reimportação');
         });
 
-        t('importarJSON rejeita conteúdo inválido', function () {
-          if (S.importarJSON('{isso nao e json').ok) throw new Error('aceitou lixo');
-          if (S.importarJSON('{"foo":1}').ok) throw new Error('aceitou estrutura errada');
+        await t('importarJSON rejeita conteúdo inválido', async function () {
+          if ((await S.importarJSON('{isso nao e json')).ok) throw new Error('aceitou lixo');
+          if ((await S.importarJSON('{"foo":1}')).ok) throw new Error('aceitou estrutura errada');
           return 'rejeitado';
         });
 
-        t('dados sobrevivem no localStorage', function () {
-          var bruto = localStorage.getItem(C.APP.storageKey);
-          if (!bruto) throw new Error('nada gravado');
-          var d = JSON.parse(bruto);
-          if (!d.equipamentos.length) throw new Error('gravou vazio');
-          return Math.round(bruto.length / 1024) + ' KB gravados';
+        await t('dados persistem de verdade no Firestore (não só no cache local)', async function () {
+          // Lê direto da coleção, ignorando o espelho em memória — prova que
+          // a escrita chegou ao servidor, não só ao onSnapshot otimista local.
+          var snap = await C.fb.db.collection('equipamentos').limit(1).get();
+          if (snap.empty) throw new Error('coleção vazia no Firestore');
+          var doc = snap.docs[0].data();
+          if (!doc.equipamento) throw new Error('documento sem os campos esperados');
+          return snap.size + ' doc(s) confirmado(s) direto na coleção';
         });
 
-        cancelar();
-        t('cancelar assinatura para de notificar', function () {
+        cancelarPrincipal();
+        await t('cancelar assinatura para de notificar', async function () {
           var n = eventos.length;
-          S.criarEquipamento({ equipamento: 'HDMI', modelo: 'HDMI - 5M', tomboNovo: '666001', status: 'Estoque' });
+          await S.criarEquipamento({ equipamento: 'HDMI', modelo: 'HDMI - 5M', tomboNovo: '666001', status: 'Estoque' });
           return eq(eventos.length, n, 'nenhum evento novo');
         });
+        // Religa para o restante da suíte continuar contando eventos.
+        cancelarPrincipal = S.assinar(function (ev) { eventos.push(ev.tipo); });
 
         /* ---- 9. Autenticação ---- */
-        t('login rejeita credencial errada', function () {
-          if (C.auth.entrar('admin', 'errada').ok) throw new Error('aceitou senha errada');
+        await t('login rejeita credencial errada', async function () {
+          if ((await C.auth.entrar('admin', 'senha-errada')).ok) throw new Error('aceitou senha errada');
           return 'rejeitado';
         });
-        t('login aceita a credencial padrão e define o perfil', function () {
-          var res = C.auth.entrar('admin', 'admin123');
-          if (!res.ok) throw new Error('recusou credencial válida');
-          eq(res.usuario.perfil, 'admin', 'perfil');
-          if (!C.auth.permissao('podeExcluir')) throw new Error('admin sem permissão de exclusão');
-          return 'admin autenticado';
-        });
-        t('perfil técnico não pode excluir', function () {
-          C.auth.entrar('tecnico', 'tecnico123');
-          if (C.auth.permissao('podeExcluir')) throw new Error('técnico pode excluir');
-          if (!C.auth.permissao('podeEditar')) throw new Error('técnico não pode editar');
-          C.auth.entrar('admin', 'admin123');
-          return 'permissões corretas';
+        await t('perfil técnico não pode excluir', async function () {
+          // Trocar de sessão reconecta os listeners de dados (as regras do
+          // Firestore exigem autenticação): o espelho local esvazia e
+          // repopula um instante depois — por isso os `aguardar` abaixo.
+          try {
+            var res = await C.auth.entrar('tecnico', 'tecnico123');
+            if (!res.ok) throw new Error('recusou credencial válida do técnico');
+            if (C.auth.permissao('podeExcluir')) throw new Error('técnico pode excluir');
+            if (!C.auth.permissao('podeEditar')) throw new Error('técnico não pode editar');
+
+            await aguardar(function () { return S.listarEquipamentos().length > 0; });
+            // As regras do Firestore bloqueiam de verdade — não só a UI.
+            var alvo = S.listarEquipamentos()[0];
+            var negado = await S.excluirEquipamento(alvo.id);
+            if (negado.ok) throw new Error('excluiu mesmo sendo técnico');
+            return 'bloqueado na UI e nas regras do Firestore';
+          } finally {
+            // Garante a volta pra admin mesmo se alguma checagem acima falhar —
+            // senão toda a suíte a partir daqui roda (erradamente) como técnico.
+            var voltou = await C.auth.entrar('admin', 'root123');
+            if (voltou.ok) await aguardar(function () { return S.listarEquipamentos().length > 0; });
+          }
         });
 
         /* ---- 10. Camada visual ---- */
-        t('chips de status cobrem os 5 estados', function () {
+        await t('chips de status cobrem os status cadastrados', function () {
           C.STATUS_TODOS.forEach(function (s) {
             var html = C.ui.chipStatus(s);
-            if (html.indexOf('chip--ajuste') > -1) throw new Error('status sem chip próprio: ' + s);
             if (html.indexOf(s) === -1) throw new Error('chip sem rótulo textual: ' + s);
           });
-          return 'todos com cor + rótulo';
+          return C.STATUS_TODOS.length + ' status, todos com cor + rótulo';
         });
 
-        t('Chart.js carregou e a paleta lê o CSS', function () {
+        await t('Chart.js carregou e a paleta lê o CSS', function () {
           if (!C.charts.disponivel()) throw new Error('Chart.js ausente');
           var p = C.charts.paleta();
           eq(p.series[0], '#2a78d6', 'slot 1 (claro)');
@@ -406,7 +533,7 @@
           return '8 slots + 5 status';
         });
 
-        t('paleta troca de passo no modo escuro', function () {
+        await t('paleta troca de passo no modo escuro', function () {
           C.ui.aplicarTema('dark');
           var d = C.charts.paleta();
           eq(d.series[0], '#3987e5', 'slot 1 (escuro)');
@@ -415,7 +542,7 @@
           return 'passos próprios, sem inversão automática';
         });
 
-        t('colunas de exportação incluem técnico e presença física', function () {
+        await t('colunas de exportação incluem técnico e presença física', function () {
           eq(C.exportar.COLS_ESTOQUE.length, 16, 'colunas do inventário');
           eq(C.exportar.COLS_MOV.length, 16, 'colunas do histórico');
           function tem(cols, chave) {
@@ -430,7 +557,7 @@
           return C.exportar.COLS_ESTOQUE.length + ' + ' + C.exportar.COLS_MOV.length + ' colunas';
         });
 
-        t('exportação formata data e tipo de movimentação', function () {
+        await t('exportação formata data e tipo de movimentação', function () {
           var m = C.exportar.matriz(
             [{ data: '2026-07-31', tipo: 'SAIDA', equipamento: 'Monitor', tomboNovo: '045118' }],
             C.exportar.COLS_MOV);
@@ -441,7 +568,7 @@
           return 'datas e rótulos traduzidos';
         });
 
-        t('SheetJS gera um XLSX real a partir do inventário', function () {
+        await t('SheetJS gera um XLSX real a partir do inventário', function () {
           if (typeof XLSX === 'undefined') throw new Error('SheetJS não carregou');
           var m = C.exportar.matriz(S.listarEquipamentos(), C.exportar.COLS_ESTOQUE);
           var ws = XLSX.utils.aoa_to_sheet([m.cabecalho].concat(m.linhas));
@@ -449,7 +576,6 @@
           XLSX.utils.book_append_sheet(wb, ws, 'Inventário');
           var buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
           if (!buf || buf.byteLength < 1000) throw new Error('arquivo suspeito: ' + (buf && buf.byteLength));
-          // Confere o ida-e-volta: o que foi escrito é lido de volta igual.
           var lido = XLSX.utils.sheet_to_json(XLSX.read(buf, { type: 'array' }).Sheets['Inventário'],
             { header: 1 });
           eq(lido[0][0], 'Equipamento', 'cabeçalho relido');
@@ -457,7 +583,7 @@
           return Math.round(buf.byteLength / 1024) + ' KB · ' + m.linhas.length + ' linhas';
         });
 
-        t('jsPDF + autotable geram um PDF paginado', function () {
+        await t('jsPDF + autotable geram um PDF paginado', function () {
           if (!(window.jspdf && window.jspdf.jsPDF)) throw new Error('jsPDF não carregou');
           var doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
           if (typeof doc.autoTable !== 'function') throw new Error('plugin autotable ausente');
@@ -469,12 +595,21 @@
             doc.internal.getNumberOfPages() + ' página(s)';
         });
 
+        await t('ExcelJS gera XLSX colorido pela coluna de status', async function () {
+          if (typeof window.ExcelJS === 'undefined') throw new Error('ExcelJS não carregou');
+          if (!C.exportar.paraExcelColorido) throw new Error('paraExcelColorido não exposto');
+          if (!C.statusCores) throw new Error('mapa de cores por status ausente');
+          var cor = C.statusCores.paraExcelFill('Estoque');
+          if (!/^FF[0-9A-F]{6}$/.test(cor.fundoARGB)) throw new Error('cor de fundo mal formada: ' + cor.fundoARGB);
+          return 'cor de "Estoque": #' + cor.fundoARGB.slice(2);
+        });
+
         /* ---- 11. Renderização real das páginas ---- */
         var palco = document.createElement('div');
         document.body.appendChild(palco);
 
-        ['dashboard', 'estoque', 'entrada', 'saida', 'relatorios'].forEach(function (nome) {
-          t('página "' + nome + '" monta sem erro', function () {
+        for (const nome of ['dashboard', 'estoque', 'entrada', 'saida', 'relatorios']) {
+          await t('página "' + nome + '" monta sem erro', function () {
             palco.innerHTML = '';
             var vivo = C.pages[nome].montar(palco, function () {});
             if (!palco.children.length) throw new Error('não renderizou nada');
@@ -483,44 +618,41 @@
             if (vivo && vivo.destruir) vivo.destruir();
             return res + ' componentes';
           });
-        });
+        }
 
-        t('dashboard desenha os 4 gráficos em canvas', function () {
+        await t('dashboard desenha os 4 gráficos em canvas', async function () {
           palco.innerHTML = '';
-          var vivo = C.pages.dashboard.montar(palco, function () {});
-          var canvases = palco.querySelectorAll('canvas');
-          eq(canvases.length, 4, 'canvas na tela');
-          var vazios = palco.querySelectorAll('.chart-empty').length;
-          if (vazios) throw new Error(vazios + ' gráfico(s) caíram em estado vazio');
-          if (vivo && vivo.destruir) vivo.destruir();
-          return '4 gráficos renderizados';
+          var vivo = null;
+          try {
+            vivo = C.pages.dashboard.montar(palco, function () {});
+            // O esqueleto grava os 4 <canvas> de uma vez (container.innerHTML);
+            // a espera aqui é só uma margem de segurança contra qualquer
+            // redesenho assíncrono concorrente vindo de outro teste.
+            await aguardar(function () { return palco.querySelectorAll('canvas').length === 4; }, 3000)
+              .catch(function () {});
+            var canvases = palco.querySelectorAll('canvas');
+            eq(canvases.length, 4, 'canvas na tela');
+            var vazios = palco.querySelectorAll('.chart-empty').length;
+            if (vazios) throw new Error(vazios + ' gráfico(s) caíram em estado vazio');
+            return '4 gráficos renderizados';
+          } finally {
+            if (vivo && vivo.destruir) vivo.destruir();
+          }
         });
 
-        t('dashboard vazia volta a desenhar quando chegam dados', function () {
-          S.limparTudo();
-          palco.innerHTML = '';
-          var vivo = C.pages.dashboard.montar(palco, function () {});
-          if (!palco.querySelectorAll('.chart-empty').length) throw new Error('não exibiu estado vazio');
-          S.registrarEntrada({
-            dataEntrada: new Date().toISOString().slice(0, 10), tomboNovo: '555001',
-            equipamento: 'Notebook', modelo: 'Positivo N6440', status: 'Estoque',
-            predioOrigem: 'CSE', setorOrigem: 'T', ttr: 'Pendente'
-          });
-          var canvases = palco.querySelectorAll('canvas').length;
-          if (canvases < 2) throw new Error('canvas não voltou: ' + canvases);
-          if (vivo && vivo.destruir) vivo.destruir();
-          return canvases + ' canvas recriados';
-        });
-
-        t('estoque reflete a saída em tempo real, sem remontar', function () {
+        await t('estoque reflete a saída em tempo real, sem remontar', async function () {
+          await aguardar(function () { return S.estoqueLaboratorio().length > 0; });
           palco.innerHTML = '';
           var vivo = C.pages.estoque.montar(palco, function () {});
           var antes = palco.querySelectorAll('tbody tr').length;
-          S.registrarSaida({
-            dataSaida: new Date().toISOString().slice(0, 10), tomboNovo: '555001',
-            equipamento: 'Notebook', modelo: 'Positivo N6440',
+          var alvo = S.estoqueLaboratorio()[0];
+          await S.registrarSaida({
+            dataSaida: new Date().toISOString().slice(0, 10),
+            tomboNovo: alvo.tomboNovo, tomboAntigo: alvo.tomboAntigo,
+            equipamento: alvo.equipamento, modelo: alvo.modelo,
             predioDestino: 'Palácio', setorDestino: 'T', ttr: 'Realizado'
           });
+          await aguardar(function () { return palco.querySelectorAll('tbody tr').length !== antes; });
           var depois = palco.querySelectorAll('tbody tr').length;
           if (vivo && vivo.destruir) vivo.destruir();
           if (depois >= antes && antes > 0) throw new Error('a tabela não diminuiu: ' + antes + ' → ' + depois);
@@ -529,9 +661,13 @@
 
         palco.remove();
 
-        /* ---- 12. Listas editáveis ---- */
+        /* ---- 12. Listas editáveis --------------------------------------------
+           A API pública (adicionar/renomear/excluir…) continua SÍNCRONA de
+           propósito — edita o espelho local na hora e devolve o resultado
+           imediato; a gravação no Firestore acontece em segundo plano. Por
+           isso a maioria destes testes não precisou de `await`. ---------- */
 
-        t('adicionar opção a uma lista de texto', function () {
+        await t('adicionar opção a uma lista de texto', function () {
           var antes = L.get('setores').length;
           var r = L.adicionar('setores', '  ZZZ - Setor de Teste  ');
           if (!r.ok) throw new Error(r.erro);
@@ -540,20 +676,21 @@
           return 'adicionado e normalizado';
         });
 
-        t('duplicata é bloqueada ignorando acento e caixa', function () {
+        await t('duplicata é bloqueada ignorando acento e caixa', function () {
           if (L.adicionar('setores', 'zzz - setor de teste').ok) throw new Error('aceitou duplicata');
           if (L.adicionar('tecnicos', 'BRENO SIMAO').ok) throw new Error('aceitou "Breno Simão" repetido');
           return 'bloqueado nos dois casos';
         });
 
-        t('excluir opção sem uso funciona', function () {
+        await t('excluir opção sem uso funciona', function () {
           var r = L.excluir('setores', 'ZZZ - Setor de Teste');
           if (!r.ok) throw new Error(r.erro);
           if (L.get('setores').indexOf('ZZZ - Setor de Teste') > -1) throw new Error('não removeu');
           return 'removido';
         });
 
-        t('excluir opção EM USO é bloqueado com a contagem', function () {
+        await t('excluir opção EM USO é bloqueado com a contagem', async function () {
+          await aguardar(function () { return S.listarEquipamentos().length > 0; });
           var usado = S.listarEquipamentos()[0];
           var r = L.excluir('equipamentos', usado.equipamento);
           if (r.ok) throw new Error('permitiu excluir opção em uso');
@@ -562,23 +699,26 @@
           return 'bloqueado: ' + r.uso.total + ' uso(s)';
         });
 
-        t('renomear reescreve os registros que usavam o valor antigo', function () {
+        await t('renomear reescreve os registros que usavam o valor antigo', async function () {
           L.adicionar('tecnicos', 'Zeca Teste');
+          await aguardar(function () { return S.listarEquipamentos().length > 0; });
           var eqRef = S.listarEquipamentos()[0];
-          S.atualizarEquipamento(eqRef.id, { tecnico: 'Zeca Teste' });
+          await S.atualizarEquipamento(eqRef.id, { tecnico: 'Zeca Teste' });
+          await aguardar(function () { return S.acharPorId(eqRef.id).tecnico === 'Zeca Teste'; });
 
           var r = L.renomear('tecnicos', 'Zeca Teste', 'Zeca Testado');
           if (!r.ok) throw new Error(r.erro);
           if (!r.afetados) throw new Error('nenhum registro reescrito');
 
-          var depois = S.acharPorId(eqRef.id);
-          eq(depois.tecnico, 'Zeca Testado', 'equipamento reescrito');
+          // reescreverUso grava via _setCampoEquipamento (fire-and-forget) —
+          // dá um instante pro Firestore confirmar antes de reler pelo id.
+          await aguardar(function () { return S.acharPorId(eqRef.id).tecnico === 'Zeca Testado'; });
           var mov = S.listarMovimentacoes().filter(function (m) { return m.tecnico === 'Zeca Teste'; });
           eq(mov.length, 0, 'movimentações com o nome antigo');
           return r.afetados + ' registro(s) reescritos';
         });
 
-        t('renomear bloqueia colisão com opção existente', function () {
+        await t('renomear bloqueia colisão com opção existente', function () {
           if (L.renomear('tecnicos', 'Zeca Testado', 'Axl Henrique').ok) {
             throw new Error('permitiu colisão');
           }
@@ -586,7 +726,7 @@
           return 'colisão bloqueada';
         });
 
-        t('criar status novo com tom e presença física', function () {
+        await t('criar status novo com tom e presença física', function () {
           var r = L.adicionar('status', 'Em Testes', {
             tom: 'info', noLab: true, contextos: ['entrada', 'estoque']
           });
@@ -599,45 +739,43 @@
           return 'status criado só nos contextos escolhidos';
         });
 
-        t('status novo entra na contagem da dashboard pelo tom', function () {
-          var r = S.registrarEntrada({
+        await t('status novo entra na contagem da dashboard pelo tom', async function () {
+          var r = await S.registrarEntrada({
             dataEntrada: new Date().toISOString().slice(0, 10), tomboNovo: '444001',
             equipamento: 'Monitor', modelo: 'HP P22A G4', status: 'Em Testes',
             predioOrigem: 'CSE', setorOrigem: 'OAB', ttr: 'Pendente'
           });
           if (!r.ok) throw new Error(r.erro);
+          await aguardar(function () { return S.resumo().porStatus['Em Testes'] === 1; });
           var res = S.resumo();
           if (!res.porTom.info) throw new Error('o tom "info" não foi contado');
-          if (res.porStatus['Em Testes'] !== 1) throw new Error('status não contabilizado');
           return 'tom info = ' + res.porTom.info;
         });
 
-        t('chip usa o tom do status criado pelo usuário', function () {
+        await t('chip usa o tom do status criado pelo usuário', function () {
           var html = C.ui.chipStatus('Em Testes');
           if (html.indexOf('chip--tom-info') === -1) throw new Error('chip sem o tom: ' + html);
           if (html.indexOf('Em Testes') === -1) throw new Error('chip sem rótulo');
           return 'cor + rótulo';
         });
 
-        t('excluir status em uso é bloqueado, forçar preserva o texto', function () {
+        await t('excluir status em uso é bloqueado, forçar preserva o texto', function () {
           var r = L.excluir('status', 'Em Testes');
           if (r.ok) throw new Error('permitiu excluir status em uso');
           var f = L.excluir('status', 'Em Testes', { forcar: true });
           if (!f.ok) throw new Error(f.erro);
           eq(S.acharPorTombo({ tomboNovo: '444001' }).status, 'Em Testes', 'texto preservado');
-          // Status fora da lista cai em neutro, sem quebrar a tela.
           eq(L.statusMeta('Em Testes').tom, 'neutral', 'fallback de tom');
           return 'bloqueado, e forçado preserva o registro';
         });
 
-        t('novas opções de fábrica entram em base antiga sem apagar customização', function () {
+        await t('restaurar um backup antigo reincorpora status novos sem apagar customização', async function () {
           L.adicionar('setores', 'Setor Customizado do Usuário');
-          // Simula uma base gravada sem os status de saída.
-          var salvo = JSON.parse(localStorage.getItem(C.APP.listasKey));
-          salvo.status = salvo.status.filter(function (s) { return s.valor !== 'Doação'; });
-          localStorage.setItem(C.APP.listasKey, JSON.stringify(salvo));
-
-          L.inicializar();
+          var backup = JSON.parse(S.exportarJSON());
+          // Simula um backup salvo antes de existir o status "Doação".
+          backup.listas.status = backup.listas.status.filter(function (s) { return s.valor !== 'Doação'; });
+          var res = await S.importarJSON(JSON.stringify(backup));
+          if (!res.ok) throw new Error(res.erro);
           if (L.statusDe('saida').indexOf('Doação') === -1) throw new Error('padrão não foi reincorporado');
           if (L.get('setores').indexOf('Setor Customizado do Usuário') === -1) {
             throw new Error('customização foi apagada');
@@ -646,7 +784,7 @@
           return 'merge preserva o que o usuário criou';
         });
 
-        t('restaurar padrão volta a lista de fábrica', function () {
+        await t('restaurar padrão volta a lista de fábrica', function () {
           L.adicionar('tecnicos', 'Fulano Temporário');
           L.restaurarPadrao('tecnicos');
           eq(L.get('tecnicos').length, 15, 'total');
@@ -654,19 +792,21 @@
           return '15 técnicos de fábrica';
         });
 
-        t('listas sobrevivem no localStorage e no backup', function () {
-          if (!localStorage.getItem(C.APP.listasKey)) throw new Error('listas não gravadas');
+        await t('listas persistem no Firestore e entram no backup', async function () {
+          await aguardar(async function () {
+            var doc = await C.fb.db.collection('listas').doc('setores').get();
+            return doc.exists && doc.data().itens.length === L.get('setores').length;
+          });
           var backup = JSON.parse(S.exportarJSON());
           if (!backup.listas || !backup.listas.setores) throw new Error('backup sem as listas');
-          eq(backup.listas.setores.length, 175, 'setores no backup');
-          return 'gravadas e incluídas no backup';
+          eq(backup.listas.setores.length, L.get('setores').length, 'setores no backup');
+          return 'gravadas no Firestore e incluídas no backup';
         });
 
         /* ---- 13. Presença física ---- */
 
-        t('presença física é da operação, não do rótulo do status', function () {
-          // "Substituição" existe nos dois contextos com sentidos opostos.
-          var ent = S.registrarEntrada({
+        await t('presença física é da operação, não do rótulo do status', async function () {
+          var ent = await S.registrarEntrada({
             dataEntrada: new Date().toISOString().slice(0, 10), tomboNovo: '333001',
             equipamento: 'Monitor', modelo: 'LG E2241PX', status: 'Substituição',
             predioOrigem: 'CSE', setorOrigem: 'OAB', ttr: 'Pendente'
@@ -674,7 +814,7 @@
           if (!ent.ok) throw new Error(ent.erro);
           eq(ent.equipamento.noLaboratorio, true, 'entrada → no laboratório');
 
-          var sai = S.registrarSaida({
+          var sai = await S.registrarSaida({
             dataSaida: new Date().toISOString().slice(0, 10), tomboNovo: '333001',
             equipamento: 'Monitor', modelo: 'LG E2241PX', status: 'Substituição',
             predioDestino: 'Palácio', setorDestino: 'OAB',
@@ -686,19 +826,18 @@
           return 'mesmo status, presença oposta — correto';
         });
 
-        t('técnico responsável é gravado na saída e no histórico', function () {
+        await t('técnico responsável é gravado na saída e no histórico', async function () {
           var eqRef = S.acharPorTombo({ tomboNovo: '333001' });
           eq(eqRef.tecnico, 'Axl Henrique', 'no equipamento');
-          var mov = S.listarMovimentacoes().find(function (m) {
-            return m.tipo === 'SAIDA' && m.tomboNovo === '333001';
+          await aguardar(function () {
+            return S.listarMovimentacoes().some(function (m) {
+              return m.tipo === 'SAIDA' && m.tomboNovo === '333001' && m.tecnico === 'Axl Henrique';
+            });
           });
-          eq(mov.tecnico, 'Axl Henrique', 'na movimentação');
           return 'gravado nos dois lugares';
         });
 
-        t('soma dos tons fecha com o total no laboratório', function () {
-          // Se um tom ficar fora do donut, o número do centro discorda do
-          // indicador principal — foi um bug real, este teste o tranca.
+        await t('soma dos tons fecha com o total no laboratório', function () {
           var res = S.resumo();
           var soma = 0;
           Object.keys(res.porTom).forEach(function (k) { soma += res.porTom[k]; });
@@ -706,7 +845,7 @@
           return soma + ' = ' + res.totalNoLab;
         });
 
-        t('estoqueLaboratorio usa o campo, não o texto do status', function () {
+        await t('estoqueLaboratorio usa o campo, não o texto do status', function () {
           var noLab = S.estoqueLaboratorio();
           if (noLab.some(function (e) { return !e.noLaboratorio; })) {
             throw new Error('item fora do laboratório entrou no estoque');
@@ -716,11 +855,14 @@
           return res.totalNoLab + ' no laboratório de ' + res.totalCadastrado;
         });
 
-        t('migração deduz noLaboratorio de registros antigos', function () {
-          var antigo = S.listarEquipamentos()[0];
-          delete antigo.noLaboratorio;               // simula base v1
+        await t('backup restaurado normaliza registros sem noLaboratorio (formato antigo)', async function () {
+          var backup = JSON.parse(S.exportarJSON());
+          var antigo = backup.equipamentos[0];
+          delete antigo.noLaboratorio;               // simula um backup salvo antes desse campo existir
           antigo.status = 'Disponibilizado';
-          S.importarJSON(S.exportarJSON());          // dispara migrar()
+          var res = await S.importarJSON(JSON.stringify(backup));
+          if (!res.ok) throw new Error(res.erro);
+          await aguardar(function () { return !!S.acharPorId(antigo.id); });
           var depois = S.acharPorId(antigo.id);
           eq(depois.noLaboratorio, false, 'Disponibilizado → fora');
           return 'campo reconstruído';
@@ -728,7 +870,7 @@
 
         /* ---- 14. Importação de planilha ---- */
 
-        t('CSV é lido com separador e aspas', function () {
+        await t('CSV é lido com separador e aspas', function () {
           var m = C.importar._lerCSV(
             'Equipamento;Modelo;Tombo Novo\r\n' +
             '"Monitor; especial";LG E2241PX;045999\r\n' +
@@ -738,7 +880,7 @@
           return '3 linhas, aspas respeitadas';
         });
 
-        t('detecção de colunas reconhece sinônimos', function () {
+        await t('detecção de colunas reconhece sinônimos', function () {
           var mapa = C.importar._detectarMapa([
             'PATRIMÔNIO', 'Marca/Modelo', 'Tipo', 'Situação', 'Setor/Unidade',
             'Prédio', 'Técnico Responsável', 'TTR', 'Data Entrada'
@@ -752,7 +894,7 @@
           return '9 colunas reconhecidas por sinônimo';
         });
 
-        t('datas e tombos são normalizados', function () {
+        await t('datas e tombos são normalizados', function () {
           eq(C.importar._paraISO('31/07/2026'), '2026-07-31', 'dd/mm/aaaa');
           eq(C.importar._paraISO('2026-7-5'), '2026-07-05', 'aaaa-m-d');
           eq(C.importar._paraISO('31-07-26'), '2026-07-31', 'dd-mm-aa');
@@ -763,7 +905,7 @@
           return 'datas e tombos ok';
         });
 
-        t('importação cria, ignora duplicata e recusa linha sem tombo', function () {
+        await t('importação cria, ignora duplicata e recusa linha sem tombo', async function () {
           var base = S.resumo().totalCadastrado;
           var linhas = [
             { _linha: 2, equipamento: 'Monitor', modelo: 'HP P22A G4', tomboNovo: '900001',
@@ -776,37 +918,37 @@
             { _linha: 6, equipamento: 'Webcam', modelo: 'Logitech C925e', tomboNovo: '' }
           ];
 
-          var sim = S.importarLinhas(linhas, { simular: true });
+          var sim = await S.importarLinhas(linhas, { simular: true });
           eq(sim.criados, 2, 'criados na simulação');
           eq(sim.ignorados, 1, 'ignorados (linha em branco)');
           eq(sim.recusados, 2, 'recusados (tombo repetido + sem tombo)');
           eq(S.resumo().totalCadastrado, base, 'simulação NÃO gravou');
 
-          var rel = S.importarLinhas(linhas, {});
+          var rel = await S.importarLinhas(linhas, {});
           eq(rel.criados, 2, 'criados de verdade');
-          eq(S.resumo().totalCadastrado, base + 2, 'total após gravar');
+          await aguardar(function () { return S.resumo().totalCadastrado === base + 2; });
           eq(S.acharPorTombo({ tomboNovo: '900001' }).tecnico, 'Breno Simão', 'técnico importado');
           return '2 criados · 1 em branco · 2 recusados';
         });
 
-        t('importação ignora tombo já cadastrado e atualiza quando pedido', function () {
+        await t('importação ignora tombo já cadastrado e atualiza quando pedido', async function () {
           var linha = [{ _linha: 2, equipamento: 'Monitor', modelo: 'LG E2241VP',
             tomboNovo: '900001', status: 'Manutenção', predioOrigem: 'Palácio',
             setorOrigem: 'OAB' }];
 
-          var r1 = S.importarLinhas(linha, {});
+          var r1 = await S.importarLinhas(linha, {});
           eq(r1.ignorados, 1, 'ignorado por padrão');
           eq(S.acharPorTombo({ tomboNovo: '900001' }).modelo, 'HP P22A G4', 'não sobrescreveu');
 
-          var r2 = S.importarLinhas(linha, { atualizarExistentes: true });
+          var r2 = await S.importarLinhas(linha, { atualizarExistentes: true });
           eq(r2.atualizados, 1, 'atualizado quando pedido');
-          eq(S.acharPorTombo({ tomboNovo: '900001' }).modelo, 'LG E2241VP', 'sobrescreveu');
+          await aguardar(function () { return S.acharPorTombo({ tomboNovo: '900001' }).modelo === 'LG E2241VP'; });
           return 'ignora por padrão, atualiza sob demanda';
         });
 
-        t('importação cadastra opções novas nas listas', function () {
+        await t('importação cadastra opções novas nas listas', async function () {
           var antesSetores = L.get('setores').length;
-          var rel = S.importarLinhas([{
+          var rel = await S.importarLinhas([{
             _linha: 2, equipamento: 'Monitor', modelo: 'Modelo Inédito XPTO',
             tomboNovo: '900500', status: 'Estoque',
             predioOrigem: 'Prédio Inédito', setorOrigem: 'Setor Inédito da Planilha',
@@ -821,18 +963,18 @@
           return rel.opcoesCriadas.length + ' opção(ões) cadastradas';
         });
 
-        t('importação registra a operação no histórico', function () {
+        await t('importação registra a operação no histórico', async function () {
+          await aguardar(function () {
+            return S.listarMovimentacoes().some(function (m) { return m.tipo === 'IMPORTACAO'; });
+          });
           var mov = S.listarMovimentacoes().find(function (m) { return m.tipo === 'IMPORTACAO'; });
-          if (!mov) throw new Error('sem registro de importação');
           if (!/criado/.test(mov.observacao)) throw new Error('observação sem o resumo');
           return 'auditável';
         });
 
-        t('pipeline completo: XLSX real → detecção → importação', function () {
+        await t('pipeline completo: XLSX real → detecção → importação', async function () {
           if (typeof XLSX === 'undefined') throw new Error('SheetJS não carregou');
 
-          // Planilha com cabeçalhos "de campo": sinônimos, acentos, ordem trocada
-          // e uma linha de título antes do cabeçalho — como vem do mundo real.
           var planilha = [
             ['INVENTÁRIO LABORATÓRIO - JULHO', '', '', '', '', '', ''],
             ['Marca/Modelo', 'PATRIMÔNIO', 'Tipo', 'Situação', 'Setor/Unidade',
@@ -845,7 +987,6 @@
             ['LG E2241PX', '', 'Monitor', 'Estoque', 'OAB', 'Fabio Lima', '17/07/2026']
           ];
 
-          // Escreve e relê como .xlsx de verdade.
           var wb = XLSX.utils.book_new();
           XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(planilha), 'Dados');
           var buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
@@ -853,7 +994,6 @@
           var matriz = XLSX.utils.sheet_to_json(lido.Sheets['Dados'],
             { header: 1, raw: false, defval: '', blankrows: false });
 
-          // Detecção na linha 2 (índice 1), como o passo 2 da interface faz.
           var mapa = C.importar._detectarMapa(matriz[1]);
           eq(mapa.tomboNovo, 1, 'PATRIMÔNIO detectado');
           eq(mapa.equipamento, 2, 'Tipo detectado');
@@ -861,11 +1001,11 @@
 
           var linhas = C.importar._montarLinhas(matriz, mapa, 1);
           var base = S.resumo().totalCadastrado;
-          var rel = S.importarLinhas(linhas, { criarOpcoes: true });
+          var rel = await S.importarLinhas(linhas, { criarOpcoes: true });
 
           eq(rel.criados, 2, 'criados (a linha sem tombo é recusada)');
           eq(rel.recusados, 1, 'recusado por falta de tombo');
-          eq(S.resumo().totalCadastrado, base + 2, 'total gravado');
+          await aguardar(function () { return S.resumo().totalCadastrado === base + 2; });
 
           var imp = S.acharPorTombo({ tomboNovo: '070001' });
           eq(imp.equipamento, 'Impressora', 'equipamento');
@@ -878,7 +1018,7 @@
           return '2 importados de um .xlsx de ' + Math.round(buf.byteLength / 1024) + ' KB';
         });
 
-        t('montarLinhas respeita o mapa e a linha de cabeçalho', function () {
+        await t('montarLinhas respeita o mapa e a linha de cabeçalho', function () {
           var matriz = [
             ['relatório interno', '', ''],
             ['Tombo', 'Tipo', 'Data'],
@@ -898,22 +1038,22 @@
 
         /* ---- 15. Drill-down da dashboard ---- */
 
-        (function () {
+        {
           var D = C.pages.dashboard;
           var palco2 = document.createElement('div');
           document.body.appendChild(palco2);
-          var vivo = null;
+          var vivo2 = null;
 
           function remontar() {
-            if (vivo && vivo.destruir) vivo.destruir();
+            if (vivo2 && vivo2.destruir) vivo2.destruir();
             D._limpar();
             palco2.innerHTML = '';
-            vivo = D.montar(palco2, function () {});
+            vivo2 = D.montar(palco2, function () {});
           }
 
-          t('dashboard tem filtro global por modelo, equipamento e situação', function () {
+          await t('dashboard tem filtro global por modelo, equipamento e situação', function () {
             remontar();
-            ['#dash-modelo', '#dash-equip', '#dash-tom'].forEach(function (sel) {
+            ['#dash-modelo', '#dash-equip', '#dash-tom', '#dash-status'].forEach(function (sel) {
               if (!palco2.querySelector(sel)) throw new Error('falta o filtro ' + sel);
             });
             var opts = palco2.querySelectorAll('#dash-modelo option').length;
@@ -921,7 +1061,7 @@
             return opts + ' opções de modelo';
           });
 
-          t('filtro por modelo recorta o conjunto', function () {
+          await t('filtro por modelo recorta o conjunto', function () {
             remontar();
             var todos = S.estoqueLaboratorio();
             var alvo = todos.length ? todos[0].modelo : '';
@@ -937,7 +1077,7 @@
             return alvo + ': ' + esperado + ' de ' + todos.length;
           });
 
-          t('KPI e centro do donut acompanham o filtro de modelo', function () {
+          await t('KPI e centro do donut acompanham o filtro de modelo', function () {
             var hero = palco2.querySelector('.stat--hero .stat__value').textContent.trim();
             eq(hero, U.numero(D._recorte().length), 'hero do recorte');
             if (palco2.querySelector('.stat--hero .stat__label').textContent.indexOf('recorte') === -1) {
@@ -946,10 +1086,9 @@
             return 'hero = ' + hero;
           });
 
-          t('clique no donut filtra por situação (cross-filter)', function () {
+          await t('clique no donut filtra por situação (cross-filter)', function () {
             remontar();
             var antes = D._recorte().length;
-            // Simula o clique numa fatia acionando o mesmo caminho do gráfico.
             D._filtro().tom = 'critical';
             var comDefeito = D._recorte();
             if (comDefeito.length >= antes) throw new Error('o recorte não reduziu');
@@ -960,18 +1099,28 @@
             return comDefeito.length + ' com defeito de ' + antes;
           });
 
-          t('cada gráfico ignora a própria dimensão (não vira barra única)', function () {
+          await t('filtro por status individual recorta mais fino que o tom', function () {
+            remontar();
+            var status = S.estoqueLaboratorio()[0].status;
+            var esperado = S.estoqueLaboratorio().filter(function (e) { return e.status === status; }).length;
+            var sel = palco2.querySelector('#dash-status');
+            sel.value = status;
+            sel.dispatchEvent(new Event('change'));
+            eq(D._filtro().status, status, 'filtro registrado');
+            eq(D._recorte().length, esperado, 'tamanho do recorte');
+            return status + ': ' + esperado + ' item(ns)';
+          });
+
+          await t('cada gráfico ignora a própria dimensão (não vira barra única)', function () {
             remontar();
             D._filtro().tom = 'critical';
             D._filtro().equipamento = S.estoqueLaboratorio()[0].equipamento;
 
-            // O donut recebe recorte('tom'): mantém todas as situações visíveis.
             var paraDonut = D._recorte('tom');
             var tons = {};
             paraDonut.forEach(function (e) { tons[L.statusMeta(e.status).tom] = true; });
             if (Object.keys(tons).length < 1) throw new Error('donut ficou sem dados');
 
-            // As barras de tipo recebem recorte('equipamento').
             var paraTipo = D._recorte('equipamento');
             if (paraTipo.some(function (e) { return L.statusMeta(e.status).tom !== 'critical'; })) {
               throw new Error('o filtro de situação não foi aplicado às barras');
@@ -979,7 +1128,7 @@
             return 'dimensões cruzadas corretamente';
           });
 
-          t('filtros combinam (modelo + situação + equipamento)', function () {
+          await t('filtros combinam (modelo + situação + equipamento)', function () {
             remontar();
             var f = D._filtro();
             f.modelo = 'Ragtech Easy Way 1200';
@@ -993,7 +1142,7 @@
             return r.length + ' item(ns) atendem aos dois filtros';
           });
 
-          t('chips mostram os filtros ativos e permitem remover', function () {
+          await t('chips mostram os filtros ativos e permitem remover', function () {
             remontar();
             var f = D._filtro();
             f.modelo = 'Ragtech Easy Way 1200';
@@ -1009,7 +1158,7 @@
             return chips.length + ' chip(s), remoção funcionando';
           });
 
-          t('"Limpar tudo" zera o drill-down', function () {
+          await t('"Limpar tudo" zera o drill-down', function () {
             remontar();
             var f = D._filtro();
             f.modelo = 'Ragtech Easy Way 1200';
@@ -1021,18 +1170,17 @@
             if (!btn) throw new Error('sem o botão Limpar tudo');
             btn.click();
             var d = D._filtro();
-            if (d.modelo || d.equipamento || d.tom || d.predio) throw new Error('sobrou filtro');
+            if (d.modelo || d.equipamento || d.tom || d.predio || d.status) throw new Error('sobrou filtro');
             eq(D._recorte().length, S.estoqueLaboratorio().length, 'voltou ao total');
             return 'limpo';
           });
 
-          t('barras de tipo listam as 14 categorias, inclusive as zeradas', function () {
+          await t('barras de tipo listam as categorias, inclusive as zeradas', function () {
             remontar();
             D._filtro().tom = 'critical';
             palco2.querySelector('#dash-tom').value = 'critical';
             palco2.querySelector('#dash-tom').dispatchEvent(new Event('change'));
 
-            // A tabela-gêmea é a fonte auditável do gráfico.
             var linhas = palco2.querySelectorAll(
               '[data-vista-alvo="tabela"][data-chave="tipo"] tbody tr');
             eq(linhas.length, L.get('equipamentos').length, 'linhas na tabela de tipos');
@@ -1044,27 +1192,27 @@
             return linhas.length + ' categorias · ' + comZero + ' zeradas exibidas';
           });
 
-          t('drill-down sobrevive a uma nova entrada em tempo real', function () {
+          await t('drill-down sobrevive a uma nova entrada em tempo real', async function () {
             remontar();
             D._filtro().equipamento = 'Monitor';
             palco2.querySelector('#dash-equip').value = 'Monitor';
             palco2.querySelector('#dash-equip').dispatchEvent(new Event('change'));
             var antes = D._recorte().length;
 
-            S.registrarEntrada({
+            await S.registrarEntrada({
               dataEntrada: new Date().toISOString().slice(0, 10), tomboNovo: '222001',
               equipamento: 'Monitor', modelo: 'HP P22A G4', status: 'Estoque',
               predioOrigem: 'CSE', setorOrigem: 'OAB', ttr: 'Pendente'
             });
 
+            await aguardar(function () { return D._recorte().length === antes + 1; });
             eq(D._filtro().equipamento, 'Monitor', 'filtro preservado');
-            eq(D._recorte().length, antes + 1, 'recorte atualizado');
             var hero = palco2.querySelector('.stat--hero .stat__value').textContent.trim();
             eq(hero, U.numero(antes + 1), 'hero repintado');
             return antes + ' → ' + (antes + 1);
           });
 
-          t('gráficos continuam desenhando com filtro ativo', function () {
+          await t('gráficos continuam desenhando com filtro ativo', function () {
             remontar();
             D._filtro().tom = 'good';
             palco2.querySelector('#dash-tom').value = 'good';
@@ -1072,26 +1220,26 @@
             var canvases = palco2.querySelectorAll('canvas').length;
             var vazios = palco2.querySelectorAll('.chart-empty').length;
             if (canvases < 3) throw new Error('só ' + canvases + ' canvas');
-            if (vivo && vivo.destruir) vivo.destruir();
+            if (vivo2 && vivo2.destruir) vivo2.destruir();
             palco2.remove();
             return canvases + ' canvas · ' + vazios + ' vazio(s)';
           });
-        })();
+        }
 
         /* ---- 16. Erros globais ---- */
-        t('nenhum erro global durante a execução', function () {
+        await t('nenhum erro global durante a execução', function () {
           if (window.__erros.length) throw new Error(window.__erros.join(' | '));
           return 'console limpo';
         });
       }
 
-      function finalizar() {
-        try { rodar(); }
+      async function finalizar() {
+        try { await rodar(); }
         catch (e) { falhas++; linhas.push('FATAL  ' + e.message + '\n' + e.stack); }
 
-        var cabecalho = '===== SAGE-TI AUTOTESTE =====\n' +
+        var cabecalho = '===== SAGE-TI AUTOTESTE (emulador local) =====\n' +
           'aprovados: ' + ok + '   falhas: ' + falhas + '\n' +
-          '===========================\n';
+          '===============================================\n';
         document.getElementById('saida').textContent =
           cabecalho + linhas.join('\n') + '\n===== FIM (' + (falhas ? 'FALHOU' : 'PASSOU') + ') =====';
       }

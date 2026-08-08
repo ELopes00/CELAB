@@ -126,11 +126,11 @@
   /** Grava uma movimentação no Firestore. Devolve uma Promise<registro>. */
   function registrarMovimentacao(mov) {
     var usuarioAtual = (SAGETI.auth && SAGETI.auth.usuarioAtual());
-    var registro = Object.assign({
-      registradoEm: agora(),
-      usuario: (usuarioAtual && usuarioAtual.usuario) || 'sistema',
-      tecnico: ''
-    }, mov);
+    var registro = Object.assign({ registradoEm: agora(), tecnico: '' }, mov);
+    // Nunca deixa `usuario` como undefined: o Firestore rejeita o documento
+    // inteiro se qualquer campo vier undefined (diferente de omitir a chave).
+    // `mov.usuario` normalmente nem existe (opcoes.usuario não informado).
+    registro.usuario = mov.usuario || (usuarioAtual && usuarioAtual.usuario) || 'sistema';
     return colMov().add(registro).then(function (ref) {
       registro.id = ref.id;
       return registro;
