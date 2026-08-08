@@ -364,45 +364,46 @@ usuário fica sem nenhuma permissão (perfil "leitura" por padrão).
 
 ## 7. Testes
 
-> **Desatualizado desde a migração ao Firestore.** `tests/autoteste.html` foi escrito
-> para a era `localStorage` (API síncrona, sem rede) e ainda não foi reescrito para o
-> `store.js` assíncrono atual — hoje ele não reflete o comportamento real do sistema.
-> Mantido aqui como referência do que cobrir num novo suite; não confie no resultado
-> até ele ser atualizado.
+`tests/autoteste.html` roda **de ponta a ponta contra o Firebase Emulator Suite**
+local (Firestore + Auth) — nunca contra o projeto de produção. São 92 verificações:
+login real, RBAC reforçado pelas regras do Firestore (não só a UI), CRUD de
+equipamentos/movimentações, listas editáveis (status por contexto, duplicata sem
+acento/caixa, renomeação em cascata, exclusão bloqueada em uso, merge de padrões de
+fábrica sobre um backup restaurado), presença física, importação de planilha (CSV,
+detecção de colunas por sinônimo, simulação que não grava, XLSX real de ida-e-volta),
+exportação (XLSX/PDF/ExcelJS colorido) e o drill-down da dashboard (7 páginas montadas
+de verdade, com Chart.js desenhando nos canvas).
 
-Abra [tests/autoteste.html](tests/autoteste.html) no navegador. São 78 verificações
-cobrindo (cobertura da versão anterior, pré-Firestore):
+Como o `store.js` é assíncrono, a suíte também é: cada teste pode devolver uma
+`Promise`, e um helper `aguardar(condicaoFn)` espera o espelho local (`onSnapshot`)
+refletir uma escrita antes de checar o resultado — sem isso, ler `S.resumo()` logo
+após um `await S.registrarEntrada(...)` poderia pegar o estado de um instante antes do
+servidor confirmar.
 
-- listas por contexto (status de entrada/saída/estoque, TTR de cada lado), ausência de
-  rótulo duplicado e compatibilidade dos acessos antigos;
-- **listas editáveis**: adicionar, bloqueio de duplicata sem acento/caixa, renomeação em
-  cascata nos registros, bloqueio de exclusão em uso, exclusão forçada preservando o
-  texto, criação de status com tom e presença física, merge de padrões de fábrica sobre
-  base customizada, restaurar padrão;
-- **presença física**: o mesmo rótulo ("Substituição") resultando em presenças opostas na
-  entrada e na saída, migração de registros v1, soma dos tons igual ao total;
-- **importação**: CSV com aspas e separador variável, detecção de colunas por sinônimo,
-  normalização de datas e de tombos com zero à esquerda, criação/ignorados/recusados com
-  simulação que não grava, atualização sob demanda, cadastro automático de opções novas e
-  registro no histórico;
-- todas as regras de entrada/saída, colisão de tombo, histórico, backup/restauração,
-  autenticação, permissões, paleta nos dois temas, geração real de XLSX (com ida-e-volta)
-  e de PDF, e a montagem das sete páginas.
+Última execução: **92 aprovados, 0 falhas**.
 
-Última execução válida: **78 aprovados, 0 falhas**, mas contra a versão `localStorage`
-anterior ao Firestore (ver aviso acima).
-
-Em linha de comando:
+### Rodar localmente
 
 ```powershell
-& "C:\Program Files\Google\Chrome\Application\chrome.exe" --headless=new `
-  --disable-gpu --allow-file-access-from-files --user-data-dir="$env:TEMP\celab_t" `
-  --virtual-time-budget=9000 --dump-dom `
-  "file:///$((Get-Location).Path -replace '\\','/')/tests/autoteste.html" > "$env:TEMP\r.html"
+# 1. Suba os emuladores (Firestore + Auth + Hosting, em portas dedicadas —
+#    não conflitam com as de produção nem com `python servidor.py`):
+firebase emulators:start --only auth,firestore,hosting
+
+# 2. Semeie o emulador uma vez (usuários admin/tecnico + listas de fábrica).
+#    O script está em memória de sessão — peça o conteúdo se precisar recriá-lo,
+#    ou use o próprio Emulator UI em http://localhost:4000 pra inspecionar.
+
+# 3. Abra no navegador:
+http://localhost:5050/tests/autoteste.html
 ```
 
+`js/firebase.js` só liga nos emuladores quando `window.SAGETI_USE_EMULATOR` está
+setado — `tests/autoteste.html` seta essa flag antes de carregar o script;
+`index.html` nunca seta, então o site publicado nunca aponta pro emulador.
+
 Para inspeção visual: `tests/preview.html?tema=dark#/estoque` (rotas: `dashboard`,
-`estoque`, `entrada`, `saida`, `relatorios`, `configuracoes`; `?login=1` abre o login).
+`estoque`, `entrada`, `saida`, `relatorios`, `configuracoes`; `?login=1` abre o login) —
+esta ainda assume login local e não foi adaptada ao Firebase Auth.
 
 ---
 
@@ -437,7 +438,6 @@ otimista — se a gravação falhar, um aviso aparece, mas a edição local não
 
 ### Fase 3 — se o escopo crescer
 
-- **Reescrever `tests/autoteste.html`** para a API assíncrona atual (ver aviso na seção 7).
 - **Next.js 15 + TypeScript + TanStack Query** — só se surgirem muitas telas novas, SSR
   ou necessidade de tipagem forte; o Firebase já no lugar permite migrar o frontend
   incrementalmente, rota a rota.
