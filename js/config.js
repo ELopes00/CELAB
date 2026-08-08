@@ -20,6 +20,9 @@ window.SAGETI = window.SAGETI || {};
     nome: 'SAGE-TI',
     descricao: 'Sistema de Ativos e Gestão de Estoque de Tecnologia da Informação',
     versao: '2.0.0',
+    // Domínio interno usado só para transformar o "usuario" da tela de login
+    // (ex.: "admin") no e-mail que o Firebase Authentication exige.
+    authDominio: 'sagi-ti.local',
     storageKey: 'celab.db.v1',
     listasKey: 'celab.listas.v1',
     sessionKey: 'celab.session.v1',

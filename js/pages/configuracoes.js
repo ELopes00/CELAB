@@ -184,14 +184,17 @@
         case 'apagar':
           return UI.confirmar({
             titulo: 'Apagar todos os dados',
-            mensagem: 'Equipamentos e movimentações serão removidos permanentemente deste ' +
-              'navegador. As listas são preservadas. Confirma?',
+            mensagem: 'Equipamentos e movimentações serão removidos permanentemente do ' +
+              'Firestore, para todo mundo que usa o sistema. As listas são preservadas. Confirma?',
             confirmar: 'Apagar tudo', perigo: true
           }).then(function (ok) {
             if (!ok) return;
-            SAGETI.store.limparTudo();
-            UI.toast('success', 'Dados apagados', 'O sistema voltou ao estado inicial.');
-            desenharPainel(container);
+            SAGETI.store.limparTudo().then(function () {
+              UI.toast('success', 'Dados apagados', 'O sistema voltou ao estado inicial.');
+              desenharPainel(container);
+            }).catch(function (e) {
+              UI.toast('error', 'Falha ao apagar', e.message);
+            });
           });
       }
     });

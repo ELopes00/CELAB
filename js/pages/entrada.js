@@ -277,29 +277,30 @@
         return UI.toast('warn', 'Tombo obrigatório', 'Informe ao menos um número de tombo.');
       }
 
-      var r = SAGETI.store.registrarEntrada(dados);
-      if (!r.ok) return UI.toast('error', 'Não foi possível registrar', r.erro);
+      SAGETI.store.registrarEntrada(dados).then(function (r) {
+        if (!r.ok) return UI.toast('error', 'Não foi possível registrar', r.erro);
 
-      UI.toast('success',
-        r.criado ? 'Entrada registrada' : 'Reentrada registrada',
-        r.equipamento.equipamento + ' · tombo ' +
-        (r.equipamento.tomboNovo || r.equipamento.tomboAntigo) +
-        ' — estoque e dashboard atualizados.');
+        UI.toast('success',
+          r.criado ? 'Entrada registrada' : 'Reentrada registrada',
+          r.equipamento.equipamento + ' · tombo ' +
+          (r.equipamento.tomboNovo || r.equipamento.tomboAntigo) +
+          ' — estoque e dashboard atualizados.');
 
-      if (container.querySelector('#en-continuar').checked) {
-        // Preserva data, prédio, setor e chamado; zera o que identifica o item.
-        tomboNovo.value = '';
-        tomboAntigo.value = '';
-        container.querySelector('#en-servico').value = '';
-        aviso.textContent = '';
-        tomboNovo.focus();
-      } else {
-        form.reset();
-        container.querySelector('#en-data').value = U.hoje();
-        repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
-        mostrarDescStatus();
-        aviso.textContent = '';
-      }
+        if (container.querySelector('#en-continuar').checked) {
+          // Preserva data, prédio, setor e chamado; zera o que identifica o item.
+          tomboNovo.value = '';
+          tomboAntigo.value = '';
+          container.querySelector('#en-servico').value = '';
+          aviso.textContent = '';
+          tomboNovo.focus();
+        } else {
+          form.reset();
+          container.querySelector('#en-data').value = U.hoje();
+          repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
+          mostrarDescStatus();
+          aviso.textContent = '';
+        }
+      });
     });
 
     form.addEventListener('reset', function () {

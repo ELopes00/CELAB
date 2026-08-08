@@ -154,6 +154,11 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.app-loading {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; color: var(--text-muted); font-size: 13px;
+}
+
 h1, h2, h3, h4, p, figure { margin: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }

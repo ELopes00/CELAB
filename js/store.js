@@ -1,10 +1,17 @@
 /* ==========================================================================
-   SAGE-TI — Store: estado global, persistência e regras de negócio
+   SAGE-TI — Store: estado global, persistência (Firestore) e regras de negócio
    --------------------------------------------------------------------------
-   Fonte única da verdade. Toda mutação passa por aqui e dispara `emit()`,
-   que notifica (a) os assinantes desta aba e (b) as outras abas abertas via
-   BroadcastChannel — é isso que faz Dashboard, Estoque e Relatórios se
-   atualizarem no mesmo instante em que uma entrada ou saída é salva.
+   Fonte única da verdade. Os dados moram no Firestore (coleções `equipamentos`
+   e `movimentacoes`) — este módulo mantém `estado` como um espelho em memória,
+   mantido fresco por listeners em tempo real (`onSnapshot`). Por isso toda
+   função de LEITURA (listarEquipamentos, acharPorId, resumo…) continua
+   síncrona: ela só lê o espelho, nunca fala com a rede diretamente.
+
+   Toda função de ESCRITA (registrarEntrada, criarEquipamento…) devolve uma
+   Promise: ela grava no Firestore e é o próprio listener em tempo real quem
+   atualiza `estado` e dispara `emit()` — o mesmo caminho usado quando a
+   mudança vem de outro navegador. Não existe mais `emit()` manual dentro das
+   mutações: a tela sempre reage ao servidor, nunca a uma suposição local.
 
    PRESENÇA FÍSICA: cada equipamento carrega `noLaboratorio` (booleano). Quem
    define é a operação — entrada põe true, saída põe false, edição no estoque
@@ -14,8 +21,6 @@
 
 (function (SAGETI) {
   'use strict';
-
-  var KEY = SAGETI.APP.storageKey;
 
   /* ---------- Utilitários -------------------------------------------------- */
 
@@ -44,75 +49,27 @@
     return meta ? !!meta.noLab : true;
   }
 
-  /* ---------- Estado ------------------------------------------------------- */
+  /* ---------- Estado (espelho local do Firestore) --------------------------- */
 
   var estado = {
     equipamentos: [],
     movimentacoes: [],
-    usuarios: [],
     meta: { criadoEm: null, versao: 2 }
   };
 
+  function colEquip() { return SAGETI.fb.db.collection('equipamentos'); }
+  function colMov() { return SAGETI.fb.db.collection('movimentacoes'); }
+  function colUsuarios() { return SAGETI.fb.db.collection('usuarios'); }
+
+  /* ---------- Pub/sub -------------------------------------------------------- */
+
   var ouvintes = [];
-  var canal = null;
-  var salvarPendente = null;
-  var origemLocal = uid();
-
-  /* ---------- Persistência ------------------------------------------------- */
-
-  function podeUsarLocalStorage() {
-    try {
-      var t = '__celab_test__';
-      window.localStorage.setItem(t, '1');
-      window.localStorage.removeItem(t);
-      return true;
-    } catch (e) { return false; }
-  }
-
-  var temLS = podeUsarLocalStorage();
-  var memoria = null;
-
-  function ler() {
-    if (!temLS) return memoria;
-    try {
-      var bruto = window.localStorage.getItem(KEY);
-      return bruto ? JSON.parse(bruto) : null;
-    } catch (e) {
-      console.warn('[SAGE-TI] Falha ao ler o armazenamento local:', e);
-      return null;
-    }
-  }
-
-  function gravar() {
-    var payload = JSON.stringify(estado);
-    if (!temLS) { memoria = JSON.parse(payload); return; }
-    try {
-      window.localStorage.setItem(KEY, payload);
-    } catch (e) {
-      console.error('[SAGE-TI] Falha ao gravar (cota excedida?):', e);
-      if (SAGETI.ui && SAGETI.ui.toast) {
-        SAGETI.ui.toast('error', 'Falha ao salvar',
-          'O navegador recusou a gravação local. Exporte os dados para não perdê-los.');
-      }
-    }
-  }
-
-  function agendarGravacao() {
-    if (salvarPendente) clearTimeout(salvarPendente);
-    salvarPendente = setTimeout(function () { salvarPendente = null; gravar(); }, 120);
-  }
-
-  /* ---------- Pub/sub + realtime entre abas -------------------------------- */
 
   function emit(evento) {
-    agendarGravacao();
     var detalhe = evento || { tipo: 'sync' };
     ouvintes.forEach(function (fn) {
       try { fn(detalhe, estado); } catch (e) { console.error('[SAGE-TI] Erro em ouvinte:', e); }
     });
-    if (canal) {
-      try { canal.postMessage({ origem: origemLocal, evento: detalhe }); } catch (e) { /* ignora */ }
-    }
   }
 
   function assinar(fn) {
@@ -130,179 +87,54 @@
     });
   }
 
-  function recarregarDeFora(evento) {
-    var dados = ler();
-    if (dados) {
-      estado.equipamentos = dados.equipamentos || [];
-      estado.movimentacoes = dados.movimentacoes || [];
-      estado.usuarios = dados.usuarios || [];
-      estado.meta = dados.meta || estado.meta;
-    }
-    ouvintes.forEach(function (fn) {
-      try { fn(evento || { tipo: 'sync', externo: true }, estado); } catch (e) { console.error(e); }
+  /* ---------- Listeners em tempo real (equipamentos / movimentações) -------- */
+
+  var pararEquip = null, pararMov = null;
+
+  /** Liga os listeners do Firestore — só depois de autenticado (regras exigem). */
+  function ligarListenersDados() {
+    desligarListenersDados();
+
+    pararEquip = colEquip().onSnapshot(function (snap) {
+      estado.equipamentos = snap.docs.map(function (d) {
+        return Object.assign({ id: d.id }, d.data());
+      });
+      emit({ tipo: 'sync' });
+    }, function (erro) {
+      console.error('[SAGE-TI] Falha ao sincronizar equipamentos:', erro);
+    });
+
+    pararMov = colMov().orderBy('registradoEm', 'desc').onSnapshot(function (snap) {
+      estado.movimentacoes = snap.docs.map(function (d) {
+        return Object.assign({ id: d.id }, d.data());
+      });
+      emit({ tipo: 'sync' });
+    }, function (erro) {
+      console.error('[SAGE-TI] Falha ao sincronizar movimentações:', erro);
     });
   }
 
-  function iniciarRealtime() {
-    if ('BroadcastChannel' in window) {
-      try {
-        canal = new BroadcastChannel(SAGETI.APP.channel);
-        canal.onmessage = function (msg) {
-          var d = msg.data || {};
-          if (d.origem === origemLocal) return;
-          recarregarDeFora(Object.assign({ externo: true }, d.evento));
-        };
-      } catch (e) { canal = null; }
-    }
-    window.addEventListener('storage', function (e) {
-      if (e.key !== KEY) return;
-      recarregarDeFora({ tipo: 'sync', externo: true });
-    });
-  }
-
-  /* ---------- Migração ----------------------------------------------------- */
-
-  /**
-   * Ajusta registros gravados por versões anteriores:
-   *   · `noLaboratorio` deduzido do status;
-   *   · campos novos (`tecnico`) criados vazios.
-   */
-  function migrar() {
-    var mudou = 0;
-    estado.equipamentos.forEach(function (e) {
-      if (typeof e.noLaboratorio !== 'boolean') {
-        // Regra antiga: "Disponibilizado" era o único status fora do laboratório.
-        e.noLaboratorio = e.status !== 'Disponibilizado';
-        mudou++;
-      }
-      if (e.tecnico === undefined) { e.tecnico = ''; mudou++; }
-      if (e.motivo === undefined) { e.motivo = ''; mudou++; }
-    });
-    estado.movimentacoes.forEach(function (m) {
-      if (m.tecnico === undefined) { m.tecnico = ''; mudou++; }
-    });
-    // Rebranding CELAB -> SAGE-TI: corrige o nome do admin gravado por uma
-    // carga anterior à mudança. Só troca o valor de fábrica antigo — se o
-    // admin já renomeou a própria conta, o nome escolhido é preservado.
-    estado.usuarios.forEach(function (u) {
-      if (u.nome === 'Administrador CELAB') { u.nome = 'Administrador SAGE-TI'; mudou++; }
-    });
-    if (mudou) { estado.meta.versao = 2; gravar(); }
-    return mudou;
-  }
-
-  /* ---------- Seed inicial ------------------------------------------------- */
-
-  // Variável de credencial
-
-  function usuariosPadrao() {
-    var cred = SAGETI.CREDENCIAIS;
-    return [
-      { id: uid(), usuario: cred.admin.usuario,   senha: cred.admin.senha,   
-        nome: 'Administrador SAGE-TI',    perfil: 'admin',   criadoEm: agora() },
-      { id: uid(), usuario: cred.tecnico.usuario, senha: cred.tecnico.senha, 
-        nome: 'Técnico de Laboratório', perfil: 'tecnico', criadoEm: agora() }
-    ];
-  }
-
-  function seedDemo() {
-    var base = new Date();
-    function diasAtras(n) {
-      return new Date(base.getTime() - n * 86400000).toISOString().slice(0, 10);
-    }
-    var demo = [
-      { cat: 'Monitor',    mod: 'LG 24BL550J-B',           tn: '045112', ta: '11233', st: 'Entrada de Estoque',   pr: 'Sede Administrativa', se: 'STI - Secretaria de Tecnologia da Informação', dias: 12 },
-      { cat: 'Monitor',    mod: 'HP P22A G4',              tn: '045118', ta: '',      st: 'Estoque',              pr: 'Forum Civel',         se: '1CIR - 1ª Vara Cível Residual', dias: 10 },
-      { cat: 'Monitor',    mod: 'Positivo 22MP55PY',       tn: '045230', ta: '10877', st: 'Devolucao Defeito',    pr: 'Palácio',             se: 'PR – Presidência', dias: 9 },
-      { cat: 'Computador', mod: 'Lenovo ThinkCentre M75q', tn: '046001', ta: '',      st: 'Estoque',              pr: 'Sede Administrativa', se: 'SUBSI - Subsecretaria de Sistemas', dias: 8 },
-      { cat: 'Computador', mod: 'Positivo Master 820',     tn: '046010', ta: '09912', st: 'Manutenção',           pr: 'Forum Criminal',      se: '2° Vara Criminal', dias: 7 },
-      { cat: 'Computador', mod: 'Positivo Minipro 810',    tn: '046022', ta: '',      st: 'Manutenção',           pr: 'CB - Comarca de Bonfim', se: 'CB - Comarca de Bonfim', dias: 6 },
-      { cat: 'Impressora', mod: 'HP Pro M404DW',           tn: '047300', ta: '08820', st: 'Devolução',            pr: 'Forum Civel',         se: 'SPAPCIVEL - Setor de Primeiro Atendimento e Protocolo Cível', dias: 6 },
-      { cat: 'Impressora', mod: 'OKI 5112',                tn: '047311', ta: '',      st: 'Leilão',               pr: 'AG - Arquivo Geral',  se: 'SARG - Setor de Arquivo Geral', dias: 5 },
-      { cat: 'Nobreak',    mod: 'Ragtech Easy Way 1200',   tn: '048500', ta: '07741', st: 'Estoque',              pr: 'Sede Administrativa', se: 'SUBINF - Subsecretaria de Infraestrutura de TIC', dias: 5 },
-      { cat: 'Nobreak',    mod: 'Ragtech Easy Way 1200',   tn: '048501', ta: '',      st: 'Defeito',              pr: 'NUPAC',               se: 'NUPAC - Núcleo Plantão Judicial e Audiências de Custódia', dias: 4 },
-      { cat: 'Notebook',   mod: 'Positivo N6440',          tn: '049100', ta: '',      st: 'Devolução Empréstimo', pr: 'Vara Infancia e Juventude', se: 'SUVIJ - Secretaria Unificada das Varas da Infância e Juventude', dias: 4 },
-      { cat: 'Scanner',    mod: 'Kodak ScanMate i1150',    tn: '050220', ta: '06630', st: 'Estoque',              pr: 'Forum Civel',         se: 'SDCRIM - Setor de Distribuição Criminal', dias: 3 },
-      { cat: 'Scanner',    mod: 'Avision AD345G',          tn: '050231', ta: '',      st: 'Manutenção',           pr: 'CC - Comarca de Caracarai', se: 'CC - Comarca de Caracaraí', dias: 3 },
-      { cat: 'Headset',    mod: 'Logitech',                tn: '051010', ta: '',      st: 'Estoque',              pr: 'NCTC - Nucleo de Conciliacao do Terminal do Centro', se: 'CEJUSCS - Centros Judiciários de Soluções de Conflitos', dias: 2 },
-      { cat: 'Webcam',     mod: 'Logitech C925e',          tn: '051500', ta: '',      st: 'Estoque',              pr: 'Casa da Mulher Brasileira', se: 'Casa da Mulher Brasileira', dias: 2 },
-      { cat: 'HDMI',       mod: 'HDMI - 10M',              tn: '052001', ta: '',      st: 'Estoque',              pr: 'Conj. Desembargadores', se: 'TP - Tribunal Pleno', dias: 2 },
-      { cat: 'Projetor Multimidia', mod: 'EPSON POWERLITE X29', tn: '053000', ta: '05512', st: 'Devolução Eq. Obsoleto', pr: 'Palácio', se: 'EJURR - Escola do Poder Judiciário', dias: 1 },
-      { cat: 'Eq. Video Conf.', mod: 'GoPresence Teams 10x', tn: '054000', ta: '',    st: 'Estoque',              pr: 'Sede Administrativa', se: 'SG - Secretaria Geral', dias: 1 }
-    ];
-
-    var ttr = SAGETI.listas.ttrDe('entrada');
-    demo.forEach(function (d, i) {
-      registrarEntrada({
-        dataEntrada: diasAtras(d.dias),
-        chamado: 'CH-' + (10450 + i),
-        tomboNovo: d.tn,
-        tomboAntigo: d.ta,
-        equipamento: d.cat,
-        modelo: d.mod,
-        servicoSolicitado: 'Recolhimento para avaliação técnica e conferência de patrimônio.',
-        status: d.st,
-        predioOrigem: d.pr,
-        setorOrigem: d.se,
-        ttr: ttr[i % 3 === 0 ? 1 : 0]
-      }, { silencioso: true, usuario: 'sistema' });
-    });
-
-    var ttrS = SAGETI.listas.ttrDe('saida');
-    var tecnicos = SAGETI.listas.get('tecnicos');
-
-    registrarSaida({
-      dataSaida: diasAtras(1), chamado: 'CH-10480',
-      tomboNovo: '045118', tomboAntigo: '',
-      equipamento: 'Monitor', modelo: 'HP P22A G4',
-      servicoSolicitado: 'Substituição de monitor com defeito na unidade.',
-      status: 'Subs. Equip. Defeito',
-      predioDestino: 'Forum Criminal', setorDestino: '1VCJ - 1ª Vara Criminal do Júri',
-      ttr: ttrS[0], tecnico: tecnicos[0]
-    }, { silencioso: true, usuario: 'sistema' });
-
-    registrarSaida({
-      dataSaida: diasAtras(0), chamado: 'CH-10488',
-      tomboNovo: '051010', tomboAntigo: '',
-      equipamento: 'Headset', modelo: 'Logitech',
-      servicoSolicitado: 'Atendimento a solicitação de novo posto de trabalho.',
-      status: 'Solicitação',
-      predioDestino: 'PA - Iracema', setorDestino: 'SADA - Setor de Atendimento',
-      ttr: ttrS[1], tecnico: tecnicos[1]
-    }, { silencioso: true, usuario: 'sistema' });
-  }
-
-  function inicializar(opcoes) {
-    // As listas precisam existir antes de qualquer regra que consulte status.
-    SAGETI.listas.inicializar();
-
-    var dados = ler();
-    if (dados && dados.equipamentos) {
-      estado.equipamentos = dados.equipamentos;
-      estado.movimentacoes = dados.movimentacoes || [];
-      estado.usuarios = (dados.usuarios && dados.usuarios.length) ? dados.usuarios : usuariosPadrao();
-      estado.meta = dados.meta || { criadoEm: agora(), versao: 2 };
-      migrar();
-    } else {
-      estado.usuarios = usuariosPadrao();
-      estado.meta = { criadoEm: agora(), versao: 2 };
-      if (!opcoes || opcoes.seed !== false) seedDemo();
-      gravar();
-    }
-    iniciarRealtime();
+  function desligarListenersDados() {
+    if (pararEquip) { pararEquip(); pararEquip = null; }
+    if (pararMov) { pararMov(); pararMov = null; }
+    estado.equipamentos = [];
+    estado.movimentacoes = [];
   }
 
   /* ---------- Histórico ---------------------------------------------------- */
 
+  /** Grava uma movimentação no Firestore. Devolve uma Promise<registro>. */
   function registrarMovimentacao(mov) {
+    var usuarioAtual = (SAGETI.auth && SAGETI.auth.usuarioAtual());
     var registro = Object.assign({
-      id: uid(),
       registradoEm: agora(),
-      usuario: (SAGETI.auth && SAGETI.auth.usuarioAtual() && SAGETI.auth.usuarioAtual().usuario) || 'sistema',
+      usuario: (usuarioAtual && usuarioAtual.usuario) || 'sistema',
       tecnico: ''
     }, mov);
-    estado.movimentacoes.unshift(registro);
-    return registro;
+    return colMov().add(registro).then(function (ref) {
+      registro.id = ref.id;
+      return registro;
+    });
   }
 
   /* ---------- Equipamentos (estoque) --------------------------------------- */
@@ -319,28 +151,31 @@
     return estado.equipamentos.find(function (e) { return e.id === id; }) || null;
   }
 
-  /** Usado pelo módulo de listas ao renomear uma opção. */
+  /** Usado pelo módulo de listas ao renomear uma opção em cascata (fire-and-forget). */
   function _setCampoEquipamento(id, campo, valor) {
     var e = acharPorId(id);
     if (!e) return false;
-    e[campo] = valor;
-    e.atualizadoEm = agora();
-    agendarGravacao();
+    var patch = {};
+    patch[campo] = valor;
+    patch.atualizadoEm = agora();
+    colEquip().doc(id).update(patch).catch(function (erro) {
+      console.error('[SAGE-TI] Falha ao atualizar equipamento em cascata:', erro);
+    });
     return true;
   }
 
   function _setCampoMovimentacao(id, campo, valor) {
-    var m = estado.movimentacoes.find(function (x) { return x.id === id; });
-    if (!m) return false;
-    m[campo] = valor;
-    agendarGravacao();
+    var patch = {};
+    patch[campo] = valor;
+    colMov().doc(id).update(patch).catch(function (erro) {
+      console.error('[SAGE-TI] Falha ao atualizar movimentação em cascata:', erro);
+    });
     return true;
   }
 
-  /** Molde de um equipamento novo. */
+  /** Molde de um equipamento novo (sem `id` — quem grava decide a chave). */
   function novoEquipamento(dados) {
     return {
-      id: uid(),
       equipamento: norm(dados.equipamento),
       modelo: norm(dados.modelo),
       tomboNovo: norm(dados.tomboNovo),
@@ -366,11 +201,11 @@
     opcoes = opcoes || {};
     var duplicado = acharPorTombo(dados);
     if (duplicado) {
-      return {
+      return Promise.resolve({
         ok: false,
         erro: 'Já existe um equipamento com o tombo ' + (dados.tomboNovo || dados.tomboAntigo) + '.',
         equipamento: duplicado
-      };
+      });
     }
 
     var eq = novoEquipamento(dados);
@@ -382,25 +217,28 @@
       eq.setorDestino = norm(dados.setorDestino);
     }
 
-    estado.equipamentos.push(eq);
-    registrarMovimentacao({
-      tipo: 'CADASTRO', data: eq.dataEntrada, equipamentoId: eq.id,
-      equipamento: eq.equipamento, modelo: eq.modelo,
-      tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
-      chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
-      statusResultante: eq.status, predio: eq.predioOrigem, setor: eq.setorOrigem,
-      ttr: eq.ttr, tecnico: eq.tecnico,
-      observacao: 'Cadastro direto no estoque do laboratório.'
+    return colEquip().add(eq).then(function (ref) {
+      eq.id = ref.id;
+      return registrarMovimentacao({
+        tipo: 'CADASTRO', data: eq.dataEntrada, equipamentoId: eq.id,
+        equipamento: eq.equipamento, modelo: eq.modelo,
+        tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
+        chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
+        statusResultante: eq.status, predio: eq.predioOrigem, setor: eq.setorOrigem,
+        ttr: eq.ttr, tecnico: eq.tecnico, usuario: opcoes.usuario,
+        observacao: 'Cadastro direto no estoque do laboratório.'
+      });
+    }).then(function () {
+      return { ok: true, equipamento: eq };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao gravar no Firestore: ' + erro.message };
     });
-
-    if (!opcoes.silencioso) emit({ tipo: 'equipamento:criado', id: eq.id });
-    return { ok: true, equipamento: eq };
   }
 
   function atualizarEquipamento(id, mudancas, opcoes) {
     opcoes = opcoes || {};
     var eq = acharPorId(id);
-    if (!eq) return { ok: false, erro: 'Equipamento não encontrado.' };
+    if (!eq) return Promise.resolve({ ok: false, erro: 'Equipamento não encontrado.' });
 
     var alvo = {
       tomboNovo: mudancas.tomboNovo != null ? mudancas.tomboNovo : eq.tomboNovo,
@@ -410,62 +248,70 @@
     var colisao = chaveAlvo && estado.equipamentos.find(function (o) {
       return o.id !== id && chaveTombo(o) === chaveAlvo;
     });
-    if (colisao) return { ok: false, erro: 'O tombo informado já pertence a outro equipamento.' };
+    if (colisao) return Promise.resolve({ ok: false, erro: 'O tombo informado já pertence a outro equipamento.' });
 
     var statusAnterior = eq.status;
+    var patch = {};
     Object.keys(mudancas).forEach(function (k) {
       if (mudancas[k] !== undefined) {
-        eq[k] = typeof mudancas[k] === 'string' ? norm(mudancas[k]) : mudancas[k];
+        patch[k] = typeof mudancas[k] === 'string' ? norm(mudancas[k]) : mudancas[k];
       }
     });
 
     // Edição pelo Estoque: o status escolhido determina a presença física.
     if (mudancas.status !== undefined && mudancas.noLaboratorio === undefined) {
-      eq.noLaboratorio = noLabDoStatus(eq.status);
+      patch.noLaboratorio = noLabDoStatus(patch.status);
     }
-    eq.atualizadoEm = agora();
+    patch.atualizadoEm = agora();
 
-    registrarMovimentacao({
-      tipo: 'AJUSTE', data: hoje(), equipamentoId: eq.id,
-      equipamento: eq.equipamento, modelo: eq.modelo,
-      tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
-      chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
-      statusAnterior: statusAnterior, statusResultante: eq.status,
-      predio: eq.predioOrigem, setor: eq.setorOrigem,
-      ttr: eq.ttr, tecnico: eq.tecnico,
-      observacao: statusAnterior !== eq.status
-        ? 'Status alterado de "' + statusAnterior + '" para "' + eq.status + '".'
-        : 'Dados do equipamento atualizados.'
+    var eqAtualizado = Object.assign({}, eq, patch);
+
+    return colEquip().doc(id).update(patch).then(function () {
+      return registrarMovimentacao({
+        tipo: 'AJUSTE', data: hoje(), equipamentoId: eqAtualizado.id,
+        equipamento: eqAtualizado.equipamento, modelo: eqAtualizado.modelo,
+        tomboNovo: eqAtualizado.tomboNovo, tomboAntigo: eqAtualizado.tomboAntigo,
+        chamado: eqAtualizado.chamado, servicoSolicitado: eqAtualizado.servicoSolicitado,
+        statusAnterior: statusAnterior, statusResultante: eqAtualizado.status,
+        predio: eqAtualizado.predioOrigem, setor: eqAtualizado.setorOrigem,
+        ttr: eqAtualizado.ttr, tecnico: eqAtualizado.tecnico, usuario: opcoes.usuario,
+        observacao: statusAnterior !== eqAtualizado.status
+          ? 'Status alterado de "' + statusAnterior + '" para "' + eqAtualizado.status + '".'
+          : 'Dados do equipamento atualizados.'
+      });
+    }).then(function () {
+      return { ok: true, equipamento: eqAtualizado };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao gravar no Firestore: ' + erro.message };
     });
-
-    if (!opcoes.silencioso) emit({ tipo: 'equipamento:atualizado', id: eq.id });
-    return { ok: true, equipamento: eq };
   }
 
   function excluirEquipamento(id, opcoes) {
     opcoes = opcoes || {};
     // Reforço de RBAC no próprio store: o botão de excluir já some da tela
     // para o perfil Técnico, mas sem esta checagem aqui a exclusão ainda
-    // seria alcançável direto pelo console do navegador.
-    if (!opcoes.silencioso && SAGETI.auth && !SAGETI.auth.permissao('podeExcluir')) {
-      return { ok: false, erro: 'Seu perfil não tem permissão para excluir equipamentos.' };
+    // seria alcançável direto pelo console do navegador. As regras do
+    // Firestore também bloqueiam (defesa em profundidade, não só aqui).
+    if (SAGETI.auth && !SAGETI.auth.permissao('podeExcluir')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não tem permissão para excluir equipamentos.' });
     }
-    var i = estado.equipamentos.findIndex(function (e) { return e.id === id; });
-    if (i === -1) return { ok: false, erro: 'Equipamento não encontrado.' };
-    var eq = estado.equipamentos[i];
-    estado.equipamentos.splice(i, 1);
+    var eq = acharPorId(id);
+    if (!eq) return Promise.resolve({ ok: false, erro: 'Equipamento não encontrado.' });
 
-    registrarMovimentacao({
-      tipo: 'EXCLUSAO', data: hoje(), equipamentoId: eq.id,
-      equipamento: eq.equipamento, modelo: eq.modelo,
-      tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
-      chamado: eq.chamado, statusAnterior: eq.status, statusResultante: '—',
-      predio: eq.predioOrigem, setor: eq.setorOrigem, ttr: eq.ttr, tecnico: eq.tecnico,
-      observacao: 'Equipamento removido do estoque do laboratório.'
+    return colEquip().doc(id).delete().then(function () {
+      return registrarMovimentacao({
+        tipo: 'EXCLUSAO', data: hoje(), equipamentoId: eq.id,
+        equipamento: eq.equipamento, modelo: eq.modelo,
+        tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
+        chamado: eq.chamado, statusAnterior: eq.status, statusResultante: '—',
+        predio: eq.predioOrigem, setor: eq.setorOrigem, ttr: eq.ttr, tecnico: eq.tecnico,
+        observacao: 'Equipamento removido do estoque do laboratório.'
+      });
+    }).then(function () {
+      return { ok: true, equipamento: eq };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao excluir no Firestore: ' + erro.message };
     });
-
-    if (!opcoes.silencioso) emit({ tipo: 'equipamento:excluido', id: id });
-    return { ok: true, equipamento: eq };
   }
 
   /* ---------- Entrada ------------------------------------------------------ */
@@ -473,79 +319,78 @@
   function registrarEntrada(dados, opcoes) {
     opcoes = opcoes || {};
     var existente = acharPorTombo(dados);
-    var criado = false;
-    var eq, statusAnterior = '';
+    var criado = !existente;
+    var statusAnterior = existente ? existente.status : '';
 
-    if (existente) {
-      eq = existente;
-      statusAnterior = eq.status;
-      eq.equipamento = norm(dados.equipamento) || eq.equipamento;
-      eq.modelo = norm(dados.modelo) || eq.modelo;
-      eq.tomboNovo = norm(dados.tomboNovo) || eq.tomboNovo;
-      eq.tomboAntigo = norm(dados.tomboAntigo) || eq.tomboAntigo;
-      eq.status = dados.status || 'Estoque';
-      eq.chamado = norm(dados.chamado);
-      eq.servicoSolicitado = norm(dados.servicoSolicitado);
-      eq.ttr = dados.ttr || '';
-      if (dados.tecnico !== undefined) eq.tecnico = norm(dados.tecnico);
-      eq.dataEntrada = dados.dataEntrada || hoje();
-      eq.predioOrigem = norm(dados.predioOrigem);
-      eq.setorOrigem = norm(dados.setorOrigem);
-      // Voltou ao laboratório: os dados da saída anterior deixam de valer.
-      eq.dataSaida = '';
-      eq.predioDestino = '';
-      eq.setorDestino = '';
-      eq.atualizadoEm = agora();
-    } else {
-      criado = true;
-      eq = novoEquipamento(dados);
-      estado.equipamentos.push(eq);
-    }
-
+    var eq = existente ? Object.assign({}, existente) : novoEquipamento(dados);
+    eq.equipamento = norm(dados.equipamento) || eq.equipamento;
+    eq.modelo = norm(dados.modelo) || eq.modelo;
+    eq.tomboNovo = norm(dados.tomboNovo) || eq.tomboNovo;
+    eq.tomboAntigo = norm(dados.tomboAntigo) || eq.tomboAntigo;
+    eq.status = dados.status || 'Estoque';
+    eq.chamado = norm(dados.chamado);
+    eq.servicoSolicitado = norm(dados.servicoSolicitado);
+    eq.ttr = dados.ttr || '';
+    if (dados.tecnico !== undefined) eq.tecnico = norm(dados.tecnico);
+    eq.dataEntrada = dados.dataEntrada || hoje();
+    eq.predioOrigem = norm(dados.predioOrigem);
+    eq.setorOrigem = norm(dados.setorOrigem);
+    // Voltou ao laboratório: os dados da saída anterior deixam de valer.
+    eq.dataSaida = '';
+    eq.predioDestino = '';
+    eq.setorDestino = '';
+    eq.atualizadoEm = agora();
     // Entrada = o equipamento está no laboratório. Independe do rótulo.
     eq.noLaboratorio = true;
 
-    var mov = registrarMovimentacao({
-      tipo: 'ENTRADA', data: eq.dataEntrada, equipamentoId: eq.id,
-      equipamento: eq.equipamento, modelo: eq.modelo,
-      tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
-      chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
-      statusAnterior: criado ? '' : statusAnterior, statusResultante: eq.status,
-      predio: eq.predioOrigem, setor: eq.setorOrigem,
-      ttr: eq.ttr, tecnico: eq.tecnico,
-      observacao: criado
-        ? 'Entrada de equipamento novo no laboratório.'
-        : 'Reentrada — registro de estoque atualizado.'
-    });
+    var gravarEq = criado
+      ? colEquip().add(eq).then(function (ref) { eq.id = ref.id; })
+      : colEquip().doc(eq.id).set(eq);
 
-    if (opcoes.usuario) mov.usuario = opcoes.usuario;
-    if (!opcoes.silencioso) emit({ tipo: 'entrada', id: eq.id, movimentacaoId: mov.id });
-    return { ok: true, equipamento: eq, criado: criado, movimentacao: mov };
+    return gravarEq.then(function () {
+      return registrarMovimentacao({
+        tipo: 'ENTRADA', data: eq.dataEntrada, equipamentoId: eq.id,
+        equipamento: eq.equipamento, modelo: eq.modelo,
+        tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
+        chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
+        statusAnterior: criado ? '' : statusAnterior, statusResultante: eq.status,
+        predio: eq.predioOrigem, setor: eq.setorOrigem,
+        ttr: eq.ttr, tecnico: eq.tecnico, usuario: opcoes.usuario,
+        observacao: criado
+          ? 'Entrada de equipamento novo no laboratório.'
+          : 'Reentrada — registro de estoque atualizado.'
+      });
+    }).then(function (mov) {
+      return { ok: true, equipamento: eq, criado: criado, movimentacao: mov };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao gravar no Firestore: ' + erro.message };
+    });
   }
 
   /* ---------- Saída -------------------------------------------------------- */
 
   function registrarSaida(dados, opcoes) {
     opcoes = opcoes || {};
-    var eq = acharPorTombo(dados);
+    var atual = acharPorTombo(dados);
 
-    if (!eq) {
-      return {
+    if (!atual) {
+      return Promise.resolve({
         ok: false,
         erro: 'Nenhum equipamento com esse tombo está cadastrado no laboratório. ' +
               'Registre a entrada antes da saída.'
-      };
+      });
     }
-    if (!eq.noLaboratorio) {
-      return {
+    if (!atual.noLaboratorio) {
+      return Promise.resolve({
         ok: false,
         erro: 'Este equipamento já saiu do laboratório em ' +
-          (eq.dataSaida ? SAGETI.util.dataBR(eq.dataSaida) : 'data anterior') +
-          ' para ' + (eq.predioDestino || 'destino não informado') +
-          ' (status "' + eq.status + '").'
-      };
+          (atual.dataSaida ? SAGETI.util.dataBR(atual.dataSaida) : 'data anterior') +
+          ' para ' + (atual.predioDestino || 'destino não informado') +
+          ' (status "' + atual.status + '").'
+      });
     }
 
+    var eq = Object.assign({}, atual);
     var statusAnterior = eq.status;
     eq.equipamento = norm(dados.equipamento) || eq.equipamento;
     eq.modelo = norm(dados.modelo) || eq.modelo;
@@ -561,25 +406,30 @@
     eq.noLaboratorio = false;
     eq.atualizadoEm = agora();
 
-    var mov = registrarMovimentacao({
-      tipo: 'SAIDA', data: eq.dataSaida, equipamentoId: eq.id,
-      equipamento: eq.equipamento, modelo: eq.modelo,
-      tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
-      chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
-      statusAnterior: statusAnterior, statusResultante: eq.status,
-      predio: eq.predioDestino, setor: eq.setorDestino,
-      ttr: eq.ttr, tecnico: eq.tecnico,
-      observacao: 'Saída do laboratório para ' + (eq.predioDestino || 'destino não informado') + '.'
+    return colEquip().doc(eq.id).set(eq).then(function () {
+      return registrarMovimentacao({
+        tipo: 'SAIDA', data: eq.dataSaida, equipamentoId: eq.id,
+        equipamento: eq.equipamento, modelo: eq.modelo,
+        tomboNovo: eq.tomboNovo, tomboAntigo: eq.tomboAntigo,
+        chamado: eq.chamado, servicoSolicitado: eq.servicoSolicitado,
+        statusAnterior: statusAnterior, statusResultante: eq.status,
+        predio: eq.predioDestino, setor: eq.setorDestino,
+        ttr: eq.ttr, tecnico: eq.tecnico, usuario: opcoes.usuario,
+        observacao: 'Saída do laboratório para ' + (eq.predioDestino || 'destino não informado') + '.'
+      });
+    }).then(function (mov) {
+      return { ok: true, equipamento: eq, movimentacao: mov };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao gravar no Firestore: ' + erro.message };
     });
-
-    if (opcoes.usuario) mov.usuario = opcoes.usuario;
-    if (!opcoes.silencioso) emit({ tipo: 'saida', id: eq.id, movimentacaoId: mov.id });
-    return { ok: true, equipamento: eq, movimentacao: mov };
   }
 
   /* ---------- Importação em massa ------------------------------------------
      Recebe linhas já normalizadas (ver js/importar.js) e cria os registros.
-     Devolve o relatório completo, incluindo o motivo de cada linha recusada.
+     Devolve uma Promise com o relatório completo (motivo de cada linha
+     recusada incluso). No modo `simular` nada é gravado — só lê o espelho
+     local, então esse caminho continua efetivamente síncrono (embrulhado
+     numa Promise só para a API ter um único formato de retorno).
      ---------------------------------------------------------------------- */
 
   function importarLinhas(linhas, opcoes) {
@@ -602,7 +452,8 @@
       estado.equipamentos.forEach(function (e) { snapshot[chaveTombo(e)] = true; });
     }
 
-    linhas.forEach(function (linha) {
+    /** Processa uma linha; devolve uma Promise (resolve mesmo quando recusada). */
+    function processarLinha(linha) {
       var registro = { linha: linha._linha, tombo: linha.tomboNovo || linha.tomboAntigo };
 
       // 1. linha em branco
@@ -612,7 +463,7 @@
         registro.resultado = 'ignorado';
         registro.motivo = 'Linha em branco.';
         rel.ignorados++; rel.itens.push(registro);
-        return;
+        return Promise.resolve();
       }
 
       // 2. sem tombo não há identidade
@@ -621,7 +472,7 @@
         registro.resultado = 'recusado';
         registro.motivo = 'Sem tombo novo nem tombo antigo.';
         rel.recusados++; rel.itens.push(registro);
-        return;
+        return Promise.resolve();
       }
 
       // 3. duplicado dentro do arquivo
@@ -629,7 +480,7 @@
         registro.resultado = 'recusado';
         registro.motivo = 'Tombo repetido na linha ' + vistosNoArquivo[c] + ' do arquivo.';
         rel.recusados++; rel.itens.push(registro);
-        return;
+        return Promise.resolve();
       }
       vistosNoArquivo[c] = linha._linha;
 
@@ -639,7 +490,7 @@
         registro.resultado = 'ignorado';
         registro.motivo = 'Tombo já cadastrado no sistema.';
         rel.ignorados++; rel.itens.push(registro);
-        return;
+        return Promise.resolve();
       }
 
       // 5. resolve os valores contra as listas
@@ -695,7 +546,7 @@
         if (existe) rel.atualizados++; else rel.criados++;
         snapshot[c] = true;
         rel.itens.push(registro);
-        return;
+        return Promise.resolve();
       }
 
       // 6. grava
@@ -705,16 +556,19 @@
         Object.keys(payload).forEach(function (k) {
           if (payload[k] !== '' && payload[k] != null) mudancas[k] = payload[k];
         });
-        var ra = atualizarEquipamento(atual.id, mudancas, { silencioso: true });
-        if (!ra.ok) {
-          registro.resultado = 'recusado'; registro.motivo = ra.erro;
-          rel.recusados++; rel.itens.push(registro);
-          return;
-        }
-        registro.resultado = 'atualizado';
-        rel.atualizados++;
-      } else {
-        var rc = criarEquipamento(payload, { silencioso: true });
+        return atualizarEquipamento(atual.id, mudancas, { silencioso: true }).then(function (ra) {
+          if (!ra.ok) {
+            registro.resultado = 'recusado'; registro.motivo = ra.erro;
+            rel.recusados++; rel.itens.push(registro);
+            return;
+          }
+          registro.resultado = 'atualizado';
+          rel.atualizados++;
+          rel.itens.push(registro);
+        });
+      }
+
+      return criarEquipamento(payload, { silencioso: true }).then(function (rc) {
         if (!rc.ok) {
           registro.resultado = 'recusado'; registro.motivo = rc.erro;
           rel.recusados++; rel.itens.push(registro);
@@ -722,33 +576,46 @@
         }
         // Se a planilha traz data de saída, o item nasce já expedido.
         if (payload.dataSaida) {
-          rc.equipamento.noLaboratorio = noLabDoStatus(payload.status);
-          rc.equipamento.dataSaida = payload.dataSaida;
-          rc.equipamento.predioDestino = payload.predioDestino;
-          rc.equipamento.setorDestino = payload.setorDestino;
+          var patch = {
+            noLaboratorio: noLabDoStatus(payload.status),
+            dataSaida: payload.dataSaida,
+            predioDestino: payload.predioDestino,
+            setorDestino: payload.setorDestino
+          };
+          return colEquip().doc(rc.equipamento.id).update(patch).then(function () {
+            registro.resultado = 'criado';
+            rel.criados++;
+            rel.itens.push(registro);
+          });
         }
         registro.resultado = 'criado';
         rel.criados++;
-      }
-      rel.itens.push(registro);
-    });
+        rel.itens.push(registro);
+      });
+    }
 
-    if (!simular) {
+    // Processa em sequência (não em paralelo): evita sobrecarregar o
+    // Firestore num import grande e mantém a detecção de duplicado
+    // consistente linha a linha, igual ao comportamento anterior.
+    var cadeia = linhas.reduce(function (promessa, linha) {
+      return promessa.then(function () { return processarLinha(linha); });
+    }, Promise.resolve());
+
+    return cadeia.then(function () {
+      if (simular) return rel;
+
       rel.opcoesCriadas = rel.opcoesCriadas.filter(function (v, i, a) { return a.indexOf(v) === i; });
       if (rel.opcoesCriadas.length) SAGETI.listas.confirmarGarantias();
 
-      registrarMovimentacao({
+      return registrarMovimentacao({
         tipo: 'IMPORTACAO', data: hoje(),
         equipamento: '—', modelo: '—',
         statusResultante: '—',
         observacao: 'Importação de planilha: ' + rel.criados + ' criado(s), ' +
           rel.atualizados + ' atualizado(s), ' + rel.ignorados + ' ignorado(s), ' +
           rel.recusados + ' recusado(s).'
-      });
-      emit({ tipo: 'importacao', relatorio: rel });
-    }
-
-    return rel;
+      }).then(function () { return rel; });
+    });
   }
 
   /* ---------- Consultas derivadas (alimentam a Dashboard) ------------------ */
@@ -841,25 +708,78 @@
     }, null, 2);
   }
 
+  /** Normaliza registros de um backup mais antigo (campos que não existiam). */
+  function normalizarRegistro(e) {
+    if (typeof e.noLaboratorio !== 'boolean') {
+      e.noLaboratorio = e.status !== 'Disponibilizado';
+    }
+    if (e.tecnico === undefined) e.tecnico = '';
+    if (e.motivo === undefined) e.motivo = '';
+    return e;
+  }
+
+  /** Apaga todos os documentos de uma coleção (a base é pequena — um lote basta). */
+  function excluirColecao(ref) {
+    return ref.get().then(function (snap) {
+      if (snap.empty) return;
+      var lote = SAGETI.fb.db.batch();
+      snap.docs.forEach(function (d) { lote.delete(d.ref); });
+      return lote.commit();
+    });
+  }
+
+  /** Restaura um backup (JSON de exportarJSON): substitui tudo no Firestore. */
   function importarJSON(texto) {
     var dados;
-    try { dados = JSON.parse(texto); } catch (e) { return { ok: false, erro: 'Arquivo JSON inválido.' }; }
+    try { dados = JSON.parse(texto); } catch (e) { return Promise.resolve({ ok: false, erro: 'Arquivo JSON inválido.' }); }
     if (!dados || !Array.isArray(dados.equipamentos)) {
-      return { ok: false, erro: 'O arquivo não contém uma lista de equipamentos.' };
+      return Promise.resolve({ ok: false, erro: 'O arquivo não contém uma lista de equipamentos.' });
     }
     // Restaura as listas antes dos registros, para os status resolverem.
     if (dados.listas) SAGETI.listas.importarJSON(JSON.stringify({ listas: dados.listas }));
-    estado.equipamentos = dados.equipamentos;
-    estado.movimentacoes = Array.isArray(dados.movimentacoes) ? dados.movimentacoes : [];
-    migrar();
-    emit({ tipo: 'import' });
-    return { ok: true, total: estado.equipamentos.length };
+
+    var equipamentos = dados.equipamentos.map(normalizarRegistro);
+    var movimentacoes = Array.isArray(dados.movimentacoes) ? dados.movimentacoes : [];
+
+    return excluirColecao(colEquip()).then(function () {
+      return excluirColecao(colMov());
+    }).then(function () {
+      var lote = SAGETI.fb.db.batch();
+      equipamentos.forEach(function (e) {
+        var id = e.id || uid();
+        var copia = Object.assign({}, e); delete copia.id;
+        lote.set(colEquip().doc(id), copia);
+      });
+      movimentacoes.forEach(function (m) {
+        var id = m.id || uid();
+        var copia = Object.assign({}, m); delete copia.id;
+        lote.set(colMov().doc(id), copia);
+      });
+      return lote.commit();
+    }).then(function () {
+      return { ok: true, total: equipamentos.length };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao restaurar no Firestore: ' + erro.message };
+    });
   }
 
   function limparTudo() {
-    estado.equipamentos = [];
-    estado.movimentacoes = [];
-    emit({ tipo: 'reset' });
+    return excluirColecao(colEquip()).then(function () {
+      return excluirColecao(colMov());
+    });
+  }
+
+  function inicializar() {
+    // As listas continuam no navegador — precisam existir antes de qualquer
+    // regra que consulte status, independente do Firestore já ter respondido.
+    SAGETI.listas.inicializar();
+    SAGETI.auth._iniciar();
+    // Liga/desliga os listeners de dados junto com o estado de login: as
+    // regras do Firestore exigem autenticação para ler equipamentos/movimentações.
+    SAGETI.auth.aoMudar(function (usuario) {
+      if (usuario) ligarListenersDados();
+      else desligarListenersDados();
+    });
   }
 
   /* ---------- API pública -------------------------------------------------- */
@@ -897,46 +817,101 @@
     _hoje: hoje
   };
 
-  /* ---------- Autenticação -------------------------------------------------- */
+  /* ---------- Autenticação (Firebase Authentication) ------------------------ */
 
-  var sessao = null;
+  var sessao = null;           // { uid, usuario, nome, perfil, entrouEm } — cache síncrono
+  var ouvintesAuth = [];
+  var authIniciado = false;
 
-  function carregarSessao() {
-    try {
-      var bruto = window.sessionStorage.getItem(SAGETI.APP.sessionKey) ||
-                  window.localStorage.getItem(SAGETI.APP.sessionKey);
-      sessao = bruto ? JSON.parse(bruto) : null;
-    } catch (e) { sessao = null; }
-    return sessao;
+  /** "admin" -> "admin@sagi-ti.local" — só uma convenção para caber no Auth por e-mail/senha. */
+  function emailDoUsuario(usuario) {
+    return norm(usuario).toLowerCase() + '@' + SAGETI.APP.authDominio;
+  }
+
+  function usuarioDoEmail(email) {
+    return String(email || '').split('@')[0];
+  }
+
+  /** Busca o perfil (nome/perfil) do usuário autenticado e monta a sessão. */
+  function carregarPerfil(user) {
+    return colUsuarios().doc(user.uid).get().then(function (doc) {
+      var d = doc.exists ? doc.data() : {};
+      sessao = {
+        uid: user.uid,
+        usuario: d.usuario || usuarioDoEmail(user.email),
+        nome: d.nome || usuarioDoEmail(user.email),
+        perfil: d.perfil || 'leitura',
+        entrouEm: agora()
+      };
+      return sessao;
+    });
+  }
+
+  function notificarAuth() {
+    ouvintesAuth.forEach(function (fn) {
+      try { fn(sessao); } catch (e) { console.error('[SAGE-TI] Erro em ouvinte de autenticação:', e); }
+    });
+  }
+
+  function mensagemErroAuth(e) {
+    var codigo = e && e.code;
+    if (codigo === 'auth/wrong-password' || codigo === 'auth/user-not-found' ||
+        codigo === 'auth/invalid-credential' || codigo === 'auth/invalid-login-credentials') {
+      return 'Usuário ou senha inválidos.';
+    }
+    if (codigo === 'auth/too-many-requests') return 'Muitas tentativas. Aguarde um pouco e tente de novo.';
+    if (codigo === 'auth/network-request-failed') return 'Sem conexão com o servidor. Verifique sua internet.';
+    return 'Não foi possível entrar: ' + ((e && e.message) || 'erro desconhecido.');
   }
 
   SAGETI.auth = {
-    entrar: function (usuario, senha, lembrar) {
-      var u = estado.usuarios.find(function (x) {
-        return x.usuario.toLowerCase() === norm(usuario).toLowerCase() && x.senha === senha;
+    /** Liga o listener de estado de autenticação — chamado uma vez, no boot. */
+    _iniciar: function () {
+      if (authIniciado) return;
+      authIniciado = true;
+      SAGETI.fb.auth.onAuthStateChanged(function (user) {
+        if (!user) { sessao = null; notificarAuth(); return; }
+        carregarPerfil(user).then(notificarAuth).catch(function (e) {
+          console.error('[SAGE-TI] Falha ao carregar perfil do usuário:', e);
+          sessao = null;
+          notificarAuth();
+        });
       });
-      if (!u) return { ok: false, erro: 'Usuário ou senha inválidos.' };
-      sessao = { id: u.id, usuario: u.usuario, nome: u.nome, perfil: u.perfil, entrouEm: agora() };
-      var payload = JSON.stringify(sessao);
-      try {
-        if (lembrar) window.localStorage.setItem(SAGETI.APP.sessionKey, payload);
-        else window.sessionStorage.setItem(SAGETI.APP.sessionKey, payload);
-      } catch (e) { /* sessão só em memória */ }
-      return { ok: true, usuario: sessao };
     },
+
+    /** Chama `fn(usuarioOuNull)` a cada mudança de login — inclusive a inicial. */
+    aoMudar: function (fn) {
+      ouvintesAuth.push(fn);
+      return function () {
+        var i = ouvintesAuth.indexOf(fn);
+        if (i > -1) ouvintesAuth.splice(i, 1);
+      };
+    },
+
+    entrar: function (usuario, senha, lembrar) {
+      var persistencia = lembrar
+        ? firebase.auth.Auth.Persistence.LOCAL
+        : firebase.auth.Auth.Persistence.SESSION;
+      return SAGETI.fb.auth.setPersistence(persistencia).then(function () {
+        return SAGETI.fb.auth.signInWithEmailAndPassword(emailDoUsuario(usuario), senha);
+      }).then(function (cred) {
+        return carregarPerfil(cred.user);
+      }).then(function (s) {
+        return { ok: true, usuario: s };
+      }).catch(function (e) {
+        return { ok: false, erro: mensagemErroAuth(e) };
+      });
+    },
+
     sair: function () {
-      sessao = null;
-      try {
-        window.sessionStorage.removeItem(SAGETI.APP.sessionKey);
-        window.localStorage.removeItem(SAGETI.APP.sessionKey);
-      } catch (e) { /* ignora */ }
+      return SAGETI.fb.auth.signOut();
     },
-    usuarioAtual: function () { return sessao || carregarSessao(); },
-    autenticado: function () { return !!(sessao || carregarSessao()); },
+
+    usuarioAtual: function () { return sessao; },
+    autenticado: function () { return !!sessao; },
     permissao: function (chave) {
-      var u = SAGETI.auth.usuarioAtual();
-      if (!u) return false;
-      var p = SAGETI.PERFIS[u.perfil] || SAGETI.PERFIS.leitura;
+      if (!sessao) return false;
+      var p = SAGETI.PERFIS[sessao.perfil] || SAGETI.PERFIS.leitura;
       return !!p[chave];
     }
   };

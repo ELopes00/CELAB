@@ -106,6 +106,8 @@
       campoSenha.focus();
     });
 
+    var btnEntrar = raiz.querySelector('#btn-entrar');
+
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       erro.classList.add('hidden');
@@ -113,16 +115,22 @@
       if (!UI.validarForm(form)) return;
 
       var dados = UI.dadosForm(form);
-      var r = SAGETI.auth.entrar(dados.usuario, dados.senha, !!dados.lembrar);
+      btnEntrar.disabled = true;
+      btnEntrar.querySelector('span').textContent = 'Entrando…';
 
-      if (!r.ok) {
-        erro.querySelector('span').textContent = r.erro;
-        erro.classList.remove('hidden');
-        campoSenha.value = '';
-        campoSenha.focus();
-        return;
-      }
-      aoEntrar(r.usuario);
+      SAGETI.auth.entrar(dados.usuario, dados.senha, !!dados.lembrar).then(function (r) {
+        if (!r.ok) {
+          erro.querySelector('span').textContent = r.erro;
+          erro.classList.remove('hidden');
+          campoSenha.value = '';
+          campoSenha.focus();
+          return;
+        }
+        aoEntrar(r.usuario);
+      }).finally(function () {
+        btnEntrar.disabled = false;
+        btnEntrar.querySelector('span').textContent = 'Entrar';
+      });
     });
 
     setTimeout(function () { raiz.querySelector('#login-usuario').focus(); }, 60);

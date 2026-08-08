@@ -2,60 +2,44 @@
 
 Sistema web de controle de estoque para laboratório de manutenção de equipamentos de TI.
 Registra entradas, saídas e alterações; mantém o inventário e a dashboard sincronizados
-em tempo real; exporta inventário e relatórios em **XLSX** e **PDF**.
+em tempo real, **entre todos os operadores** (Firebase/Firestore); exporta inventário e
+relatórios em **XLSX** e **PDF**.
 
-**Roda sem instalar nada.** Abra [index.html](index.html) no navegador.
+**Publicado em:** https://sagi-ti.web.app
 
 ---
 
 ## 1. Como usar
 
-### Abrir
+### Acessar
 
-Dê duplo clique em `index.html`, ou arraste-o para uma janela do Chrome/Edge.
+Abra https://sagi-ti.web.app — exige internet (fala com o Firebase; não funciona aberto
+direto do disco nem totalmente offline). Para rodar localmente durante o desenvolvimento,
+sirva a pasta por HTTP (`python servidor.py`, depois `http://localhost:8080`) — o
+`index.html` aponta pro mesmo projeto Firebase de produção.
 
-Credenciais de demonstração:
+Credenciais:
 
 | Usuário   | Senha        | Perfil                                |
 |-----------|--------------|---------------------------------------|
-| `admin`   | `admin123`   | Administrador — edita e exclui        |
+| `admin`   | `root123`    | Administrador — edita e exclui        |
 | `tecnico` | `tecnico123` | Técnico — edita, não exclui           |
 
+Por baixo dos panos são contas do Firebase Authentication (`admin@sagi-ti.local` /
+`tecnico@sagi-ti.local`) — a tela de login só pede o usuário e monta o e-mail sozinha.
+
 > O sistema nasce com 18 equipamentos de exemplo para a dashboard não abrir vazia.
-> Em **Dados e backup → Apagar todos os dados** você zera tudo e começa do inventário real.
+> Em **Dados e backup → Apagar todos os dados** você zera tudo — pro sistema inteiro,
+> já que os dados agora são compartilhados — e começa do inventário real.
 
-### Recomendado: servir por HTTP
+### Dados compartilhados, não por navegador
 
-Aberto direto do disco (`file://`) alguns navegadores restringem o armazenamento local
-e a sincronização entre abas. Dentro da pasta `CELAB`:
-
-```powershell
-python servidor.py
-```
-
-Depois acesse `http://localhost:8080`. Com isso você ganha:
-
-- persistência garantida entre sessões;
-- **sincronização entre abas** — abra a dashboard em uma aba e a entrada em outra:
-  ao salvar, a dashboard se atualiza sozinha.
-
-### Publicar na intranet
-
-[servidor.py](servidor.py) já escuta em `0.0.0.0:8080`, então outras máquinas da rede
-acessam por `http://<ip-desta-máquina>:8080`. Host e porta ficam no topo do arquivo.
-
-Libere a porta no firewall **uma vez**, em um PowerShell como Administrador:
-
-```powershell
-New-NetFirewallRule -DisplayName "SAGE-TI 8080" -Direction Inbound `
-  -Protocol TCP -LocalPort 8080 -Action Allow -Profile Private
-```
-
-> **Atenção — os dados não são compartilhados.** Servir na rede distribui a *interface*,
-> não o banco. Cada navegador guarda o próprio `localStorage`: duas máquinas verão
-> inventários diferentes, e lançar uma entrada em uma delas não aparece na outra.
-> Para um estoque único entre vários operadores é preciso um backend — veja a
-> **Fase 2** na seção 8.
+Diferente da versão anterior (que guardava tudo em `localStorage`), equipamentos e
+movimentações agora vivem no **Firestore**: qualquer pessoa autenticada, em qualquer
+computador, vê e edita o mesmo estoque, em tempo real (`onSnapshot`, sem precisar
+recarregar a página). As regras de acesso ficam em [firestore.rules](firestore.rules).
+As **listas editáveis** (status, setores, técnicos, modelos, TTR) continuam no
+`localStorage` de cada navegador — ver Limitações conhecidas.
 
 ---
 
@@ -368,15 +352,26 @@ independentes e ficam nas variáveis `--series-*` e `--status-*`.
 
 ### Usuários
 
-Em `store.js`, função `usuariosPadrao()`. As senhas ficam em texto puro — adequado a um
-app de máquina única, **não** a uma implantação em rede. Veja a Fase 2.
+Contas reais do Firebase Authentication (e-mail/senha) — não existe mais senha em texto
+puro em lugar nenhum do código. Para criar um usuário novo: cadastre-o em
+console.firebase.google.com → Authentication (e-mail no formato `usuario@sagi-ti.local`,
+já que é isso que a tela de login monta a partir do campo "Usuário"), e crie o documento
+de perfil correspondente em `/usuarios/{uid}` no Firestore com os campos `usuario`,
+`nome` e `perfil` (`admin` ou `tecnico`) — sem esse documento, o login funciona mas o
+usuário fica sem nenhuma permissão (perfil "leitura" por padrão).
 
 ---
 
 ## 7. Testes
 
+> **Desatualizado desde a migração ao Firestore.** `tests/autoteste.html` foi escrito
+> para a era `localStorage` (API síncrona, sem rede) e ainda não foi reescrito para o
+> `store.js` assíncrono atual — hoje ele não reflete o comportamento real do sistema.
+> Mantido aqui como referência do que cobrir num novo suite; não confie no resultado
+> até ele ser atualizado.
+
 Abra [tests/autoteste.html](tests/autoteste.html) no navegador. São 78 verificações
-cobrindo:
+cobrindo (cobertura da versão anterior, pré-Firestore):
 
 - listas por contexto (status de entrada/saída/estoque, TTR de cada lado), ausência de
   rótulo duplicado e compatibilidade dos acessos antigos;
@@ -394,7 +389,8 @@ cobrindo:
   autenticação, permissões, paleta nos dois temas, geração real de XLSX (com ida-e-volta)
   e de PDF, e a montagem das sete páginas.
 
-Última execução: **78 aprovados, 0 falhas** (Chrome headless, perfil limpo).
+Última execução válida: **78 aprovados, 0 falhas**, mas contra a versão `localStorage`
+anterior ao Firestore (ver aviso acima).
 
 Em linha de comando:
 
@@ -412,158 +408,59 @@ Para inspeção visual: `tests/preview.html?tema=dark#/estoque` (rotas: `dashboa
 
 ## 8. Plano de evolução
 
-O que existe hoje atende **um laboratório, um computador**. O que muda conforme a
-necessidade cresce:
+### Fase 1 — máquina única (superada)
+Dados em `localStorage`, sincronização entre abas por `BroadcastChannel`. Ficou pra trás
+quando o sistema passou a atender mais de um operador.
 
-### Fase 1 — em produção hoje (concluída)
-Dados em `localStorage`, sincronização entre abas por `BroadcastChannel`, backup manual
-em JSON, listas editáveis pela interface e carga inicial por planilha. Zero
-infraestrutura, zero custo.
+### Fase 2 — multiusuário em rede (concluída — Firebase)
 
-**Limite:** os dados vivem no navegador daquela máquina. Dois técnicos em computadores
-diferentes têm inventários diferentes.
+Implementada com **Firebase**, não com o Supabase originalmente cogitado aqui — o
+resultado é o mesmo objetivo (dados centralizados, tempo real entre operadores,
+autenticação de verdade), com uma stack diferente:
 
-### Fase 2 — multiusuário em rede (recomendada quando houver 2+ operadores)
-
-**Stack sugerida: Supabase.** É o menor salto de complexidade a partir daqui — Postgres
-gerenciado, autenticação e *realtime* por WebSocket num serviço só, com camada gratuita
-suficiente para este volume.
-
-| Camada | Hoje | Depois |
+| Camada | Antes | Agora |
 |---|---|---|
-| Dados | `localStorage` | Postgres (Supabase) |
-| Tempo real | `BroadcastChannel` | Supabase Realtime (replicação lógica) |
-| Login | `usuariosPadrao()` | Supabase Auth + RLS por perfil |
-| Frontend | este mesmo | este mesmo, só o `store.js` muda |
+| Dados | `localStorage` | Firestore (`equipamentos`, `movimentacoes`) |
+| Tempo real | `BroadcastChannel` (só entre abas da mesma máquina) | `onSnapshot` do Firestore (entre qualquer cliente autenticado) |
+| Login | array local, senha em texto puro | Firebase Authentication (e-mail/senha) |
+| Autorização | só na UI | reforçada nas [firestore.rules](firestore.rules) (admin/tecnico) |
+| Frontend | — | o mesmo; só `js/store.js` fala com o Firebase — as 7 páginas não mudaram de API |
 
-A migração **não exige reescrever o sistema**. `store.js` já isola toda a persistência
-atrás de uma interface pequena; trocá-la é substituir seis funções:
+`js/store.js` mantém `estado.equipamentos`/`estado.movimentacoes` como espelho em
+memória, atualizado pelos listeners `onSnapshot` — por isso toda função de leitura
+(`listarEquipamentos`, `resumo`…) continua síncrona; só as escritas
+(`registrarEntrada`, `criarEquipamento`…) viraram `Promise`.
 
-```js
-// store.js — hoje
-function registrarEntrada(dados) { /* …grava em memória… */ emit({tipo:'entrada'}); }
-
-// store.js — com Supabase
-async function registrarEntrada(dados) {
-  const { data, error } = await supabase.rpc('registrar_entrada', dados);
-  if (error) return { ok: false, erro: error.message };
-  return { ok: true, equipamento: data };   // o emit vem do canal realtime
-}
-
-supabase.channel('estoque')
-  .on('postgres_changes', { event: '*', schema: 'public' }, recarregarDeFora)
-  .subscribe();
-```
-
-O `emit()` local dá lugar ao evento vindo do banco — as páginas, que já assinam o store,
-não mudam uma linha.
-
-Esboço do schema:
-
-```sql
--- As listas são DADOS, não constraints. Um CHECK com status fixos quebraria o
--- requisito de o usuário poder criar as próprias opções pela interface.
-create table listas (
-  id uuid primary key default gen_random_uuid(),
-  lista text not null,          -- 'status' | 'setores' | 'tecnicos' | …
-  valor text not null,
-  tom text,                     -- só para status: good|info|warning|serious|critical|neutral
-  no_lab boolean default true,  -- só para status: presença física padrão
-  contextos text[],             -- só para status: {entrada,saida,estoque}
-  descricao text,
-  ordem int default 0,
-  unique (lista, valor)
-);
--- Duplicata tolerante a acento e caixa, como no cliente:
-create unique index listas_valor_uk
-  on listas (lista, lower(unaccent(valor)));
-
-create table equipamentos (
-  id uuid primary key default gen_random_uuid(),
-  equipamento text not null,
-  modelo text not null,
-  tombo_novo text,
-  tombo_antigo text,
-  status text not null,
-  no_laboratorio boolean not null default true,   -- definido pela operação
-  chamado text,
-  servico_solicitado text,
-  ttr text,
-  tecnico text,
-  data_entrada date,
-  predio_origem text,
-  setor_origem text,
-  data_saida date,
-  predio_destino text,
-  setor_destino text,
-  criado_em timestamptz default now(),
-  atualizado_em timestamptz default now()
-);
-
--- a regra de identidade por tombo, garantida pelo banco
-create unique index equipamentos_tombo_novo_uk
-  on equipamentos (tombo_novo) where tombo_novo <> '';
-create index equipamentos_no_lab_idx on equipamentos (no_laboratorio);
-
-create table movimentacoes (
-  id uuid primary key default gen_random_uuid(),
-  equipamento_id uuid references equipamentos(id) on delete set null,
-  tipo text not null check (tipo in
-    ('ENTRADA','SAIDA','CADASTRO','AJUSTE','EXCLUSAO','IMPORTACAO')),
-  data date not null,
-  status_anterior text,
-  status_resultante text,
-  predio text, setor text, chamado text, ttr text, tecnico text,
-  servico_solicitado text, observacao text,
-  usuario_id uuid references auth.users(id),
-  registrado_em timestamptz default now()
-);
-
-create index movimentacoes_data_idx on movimentacoes (data desc);
-alter publication supabase_realtime
-  add table equipamentos, movimentacoes, listas;
-```
-
-Duas funções `plpgsql` fecham as regras no banco: `registrar_entrada` (upsert por tombo,
-`no_laboratorio = true`) e `registrar_saida` (recusa tombo ausente ou já expedido,
-`no_laboratorio = false`). Renomear uma opção vira um `UPDATE` em cascata dentro de uma
-transação — o mesmo que `listas.renomear()` faz hoje no cliente.
-
-As regras de entrada e saída viram funções `plpgsql` — assim a consistência não depende
-do cliente. Ative RLS: leitura para autenticados, escrita para `tecnico` e `admin`,
-`delete` só para `admin`.
-
-**Esforço estimado:** 2 a 3 dias, sem tocar na interface.
+**Ainda não migradas:** as listas editáveis (status, setores, técnicos, modelos, TTR)
+continuam no `localStorage` de cada navegador — ver Limitações conhecidas.
 
 ### Fase 3 — se o escopo crescer
 
-Só vale a pena com demandas concretas que a Fase 2 não cubra:
-
-- **Next.js 15 + TypeScript + TanStack Query** — se surgirem muitas telas novas, SSR ou
-  necessidade de tipagem forte no domínio. Com Supabase já no lugar, o frontend é
-  reescrito de forma incremental, rota a rota.
-- **Leitura de código de barras do tombo** — `@zxing/browser` com a câmera do celular
-  acelera muito a conferência física de inventário.
-- **Anexos** (fotos do defeito, termo de entrega assinado) — Supabase Storage.
+- **Migrar as listas editáveis para o Firestore também** (coleção `listas`, já prevista
+  em `firestore.rules`) — hoje é a maior inconsistência: dois técnicos em máquinas
+  diferentes podem ver setores/status diferentes se um deles personalizar a lista local.
+- **Reescrever `tests/autoteste.html`** para a API assíncrona atual (ver aviso na seção 7).
+- **Next.js 15 + TypeScript + TanStack Query** — só se surgirem muitas telas novas, SSR
+  ou necessidade de tipagem forte; o Firebase já no lugar permite migrar o frontend
+  incrementalmente, rota a rota.
+- **Anexos** (fotos do defeito, termo de entrega assinado) — Firebase Storage.
 - **Assinatura digital do termo de saída** e integração com o sistema patrimonial.
 - **Relatório de tempo médio de reparo** — os dados já estão no histórico; falta a tela.
-
-Recomendação: só saia da Fase 2 quando houver uma demanda que a Fase 2 realmente não
-resolva. Next.js aqui é uma escolha de escala, não de qualidade — a interface atual já
-entrega a experiência pretendida.
 
 ---
 
 ## 9. Limitações conhecidas
 
-- **Dados por navegador.** Trocar de computador ou limpar os dados de navegação apaga o
-  inventário. Faça o backup JSON com regularidade (Dados e backup → Baixar backup).
-- **Senhas em texto puro.** Aceitável para uma máquina de laboratório com acesso físico
-  controlado; inaceitável em rede — resolvido na Fase 2 com Supabase Auth.
-- **Sem controle de concorrência.** Duas abas editando o mesmo tombo ao mesmo tempo: a
-  última gravação vence.
+- **Listas editáveis não são compartilhadas.** Status, setores, técnicos, modelos e TTR
+  continuam no `localStorage` de cada navegador — só equipamentos e movimentações estão
+  no Firestore. Dois técnicos em máquinas diferentes podem ver essas listas divergentes
+  se uma delas for personalizada. Ver Fase 3.
+- **Exige internet.** Sem conexão com o Firebase, o sistema não abre (login e dados
+  dependem de rede) — diferente da versão anterior, que funcionava 100% offline.
+- **Sem controle de concorrência forte.** Duas edições no mesmo tombo ao mesmo tempo: a
+  última gravação vence (não há transação otimista entre clientes).
 - **Exportação depende de CDN.** Sem internet, XLSX vira CSV e o PDF vai pela janela de
-  impressão. Para uso offline permanente, baixe as três bibliotecas para `js/vendor/` e
-  ajuste os `<script>` do `index.html`.
-- **Volume.** `localStorage` comporta ~5 MB — na ordem de 15 a 20 mil movimentações. Bem
-  acima do giro de um laboratório, mas é um teto real.
+  impressão. Para uso offline permanente, baixe as bibliotecas para `js/vendor/` e ajuste
+  os `<script>` do `index.html`.
+- **`tests/autoteste.html` desatualizado.** Ainda testa a API síncrona da versão
+  `localStorage`; não cobre o Firestore. Ver seção 7.

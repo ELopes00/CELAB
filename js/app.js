@@ -199,8 +199,8 @@
 
       '<div class="section-title" style="margin-top:0">Backup e restauração</div>' +
       '<p style="font-size:12.5px;color:var(--text-secondary);margin-bottom:12px">' +
-        'Os dados ficam salvos no navegador deste computador. Exporte um backup em JSON com ' +
-        'regularidade — e ao migrar para um servidor, este mesmo arquivo alimenta a carga inicial.</p>' +
+        'Os dados ficam salvos no Firestore e são compartilhados entre todos que acessam o ' +
+        'sistema. Exporte um backup em JSON com regularidade, como cópia de segurança.</p>' +
 
       '<div class="btn-group" style="margin-bottom:20px">' +
         '<button class="btn btn--outline btn--sm" data-cfg="backup">' +
@@ -212,14 +212,14 @@
 
       '<div class="section-title">Zona de risco</div>' +
       '<div class="alert alert--warning" style="margin-bottom:12px">' + UI.icone('alerta', 17) +
-        '<span>Apagar os dados remove todos os equipamentos e todo o histórico deste navegador. ' +
-        'A ação não pode ser desfeita — faça um backup antes.</span></div>' +
+        '<span>Apagar os dados remove todos os equipamentos e todo o histórico do Firestore, ' +
+        'para todo mundo que usa o sistema. A ação não pode ser desfeita — faça um backup antes.</span></div>' +
       '<button class="btn btn--danger btn--sm" data-cfg="limpar">' +
         UI.icone('lixeira', 14) + '<span>Apagar todos os dados</span></button>';
 
     var ref = UI.modal({
       titulo: 'Dados e backup',
-      subtitulo: SAGETI.APP.nome + ' ' + SAGETI.APP.versao + ' · armazenamento local do navegador',
+      subtitulo: SAGETI.APP.nome + ' ' + SAGETI.APP.versao + ' · Firestore (compartilhado)',
       corpo: corpo,
       botoes: [{ texto: 'Fechar', classe: 'btn--ghost' }]
     });
@@ -248,8 +248,11 @@
           perigo: true
         }).then(function (ok) {
           if (!ok) return;
-          SAGETI.store.limparTudo();
-          UI.toast('success', 'Dados apagados', 'O sistema voltou ao estado inicial.');
+          SAGETI.store.limparTudo().then(function () {
+            UI.toast('success', 'Dados apagados', 'O sistema voltou ao estado inicial.');
+          }).catch(function (e) {
+            UI.toast('error', 'Falha ao apagar', e.message);
+          });
         });
       }
     });
@@ -259,13 +262,14 @@
       if (!f) return;
       var leitor = new FileReader();
       leitor.onload = function () {
-        var res = SAGETI.store.importarJSON(String(leitor.result));
-        if (res.ok) {
-          UI.fecharModal();
-          UI.toast('success', 'Dados restaurados', res.total + ' equipamento(s) carregado(s).');
-        } else {
-          UI.toast('error', 'Falha ao restaurar', res.erro);
-        }
+        SAGETI.store.importarJSON(String(leitor.result)).then(function (res) {
+          if (res.ok) {
+            UI.fecharModal();
+            UI.toast('success', 'Dados restaurados', res.total + ' equipamento(s) carregado(s).');
+          } else {
+            UI.toast('error', 'Falha ao restaurar', res.erro);
+          }
+        });
       };
       leitor.readAsText(f);
     });
@@ -421,9 +425,10 @@
   }
 
   function sair() {
-    SAGETI.auth.sair();
     window.location.hash = '';
-    abrirLogin();
+    SAGETI.auth.sair();
+    // A troca de tela é feita pelo ouvinte de autenticação (aoMudar), não aqui —
+    // assim login/logout têm um único caminho, venha o gatilho de onde vier.
   }
 
   /* ---------- Boot ------------------------------------------------------------------- */
@@ -431,24 +436,18 @@
   function iniciar() {
     raiz = document.getElementById('app');
     UI.aplicarTema(UI.temaAtual());
+    raiz.innerHTML = '<div class="app-loading" role="status" aria-live="polite">Carregando…</div>';
+
     SAGETI.store.inicializar();
     // Botão ⚙ ao lado dos campos: um único ouvinte para todo o app.
     SAGETI.gerenciador.ligarGlobal();
 
-    if (SAGETI.auth.autenticado()) abrirApp();
-    else abrirLogin();
-
-    // Sem localStorage (algumas configurações de file://) os dados não persistem.
-    try {
-      localStorage.setItem('__celab_probe__', '1');
-      localStorage.removeItem('__celab_probe__');
-    } catch (e) {
-      setTimeout(function () {
-        UI.toast('warn', 'Armazenamento indisponível',
-          'O navegador bloqueou o armazenamento local: os dados existirão só nesta sessão. ' +
-          'Sirva a pasta por HTTP para persistir.', 12000);
-      }, 900);
-    }
+    // Único ponto que decide a tela: resolve o login persistido no boot,
+    // e reage a login/logout depois (inclusive vindo de outra aba/dispositivo).
+    SAGETI.auth.aoMudar(function (usuario) {
+      if (usuario) abrirApp();
+      else abrirLogin();
+    });
   }
 
   if (document.readyState === 'loading') {

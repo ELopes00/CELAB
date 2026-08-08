@@ -396,7 +396,11 @@
     explicar();
   }
 
-  /** Retorna false para manter o modal aberto quando houver erro. */
+  /**
+   * O modal fecha sozinho quando `acao` NÃO devolve `false` (ver UI.modal).
+   * Como salvar agora é assíncrono, esta função sempre devolve `false` na
+   * hora — e fecha o modal ela mesma, manualmente, quando o Firestore confirma.
+   */
   function salvar(container, caixa, eq) {
     var form = caixa.querySelector('#form-eq');
     if (!UI.validarForm(form)) {
@@ -412,19 +416,23 @@
       return false;
     }
 
-    var r = eq
+    var promessa = eq
       ? SAGETI.store.atualizarEquipamento(eq.id, dados)
       : SAGETI.store.criarEquipamento(dados);
 
-    if (!r.ok) {
-      UI.toast('error', 'Não foi possível salvar', r.erro);
-      return false;
-    }
+    promessa.then(function (r) {
+      if (!r.ok) {
+        UI.toast('error', 'Não foi possível salvar', r.erro);
+        return;
+      }
+      UI.fecharModal();
+      UI.toast('success',
+        eq ? 'Equipamento atualizado' : 'Equipamento adicionado',
+        (r.equipamento.equipamento || '') + ' · tombo ' +
+        (r.equipamento.tomboNovo || r.equipamento.tomboAntigo));
+    });
 
-    UI.toast('success',
-      eq ? 'Equipamento atualizado' : 'Equipamento adicionado',
-      (r.equipamento.equipamento || '') + ' · tombo ' +
-      (r.equipamento.tomboNovo || r.equipamento.tomboAntigo));
+    return false;
   }
 
   /* ---------- Detalhes ------------------------------------------------------- */
@@ -621,9 +629,10 @@
           perigo: true
         }).then(function (ok) {
           if (!ok) return;
-          var r = SAGETI.store.excluirEquipamento(id);
-          if (r.ok) UI.toast('success', 'Equipamento excluído', 'Registro removido do estoque.');
-          else UI.toast('error', 'Falha ao excluir', r.erro);
+          SAGETI.store.excluirEquipamento(id).then(function (r) {
+            if (r.ok) UI.toast('success', 'Equipamento excluído', 'Registro removido do estoque.');
+            else UI.toast('error', 'Falha ao excluir', r.erro);
+          });
         });
         return;
       }

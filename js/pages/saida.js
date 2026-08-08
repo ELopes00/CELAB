@@ -363,23 +363,24 @@
         return UI.toast('warn', 'Tombo obrigatório', 'Informe ao menos um número de tombo.');
       }
 
-      var r = SAGETI.store.registrarSaida(dados);
-      if (!r.ok) {
-        UI.marcarErro(tomboNovo, 'Equipamento não disponível para saída.');
-        return UI.toast('error', 'Saída não registrada', r.erro);
-      }
+      SAGETI.store.registrarSaida(dados).then(function (r) {
+        if (!r.ok) {
+          UI.marcarErro(tomboNovo, 'Equipamento não disponível para saída.');
+          return UI.toast('error', 'Saída não registrada', r.erro);
+        }
 
-      UI.toast('success', 'Saída registrada',
-        r.equipamento.equipamento + ' · tombo ' +
-        (r.equipamento.tomboNovo || r.equipamento.tomboAntigo) + ' → ' +
-        (r.equipamento.predioDestino || 'destino') + '. Estoque e dashboard atualizados.');
+        UI.toast('success', 'Saída registrada',
+          r.equipamento.equipamento + ' · tombo ' +
+          (r.equipamento.tomboNovo || r.equipamento.tomboAntigo) + ' → ' +
+          (r.equipamento.predioDestino || 'destino') + '. Estoque e dashboard atualizados.');
 
-      form.reset();
-      container.querySelector('#sa-data').value = U.hoje();
-      repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
-      mostrarDescStatus();
-      achadoWrap.style.display = 'none';
-      tomboNovo.focus();
+        form.reset();
+        container.querySelector('#sa-data').value = U.hoje();
+        repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
+        mostrarDescStatus();
+        achadoWrap.style.display = 'none';
+        tomboNovo.focus();
+      });
     });
 
     form.addEventListener('reset', function () {

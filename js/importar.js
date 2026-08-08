@@ -492,13 +492,15 @@
           'identifica cada equipamento.');
       }
       ctx.linhas = montarLinhas(ctx.porAba[ctx.aba] || [], ctx.mapa, ctx.linhaCabecalho);
-      ctx.simulacao = SAGETI.store.importarLinhas(ctx.linhas, {
+      SAGETI.store.importarLinhas(ctx.linhas, {
         simular: true,
         criarOpcoes: ctx.criarOpcoes,
         atualizarExistentes: ctx.atualizarExistentes
+      }).then(function (simulacao) {
+        ctx.simulacao = simulacao;
+        ctx.passo = 3;
+        desenhar();
       });
-      ctx.passo = 3;
-      desenhar();
     }
 
     /* --- passo 3: conferir --- */
@@ -585,21 +587,24 @@
 
       // Cede um quadro para o botão repintar antes do trabalho pesado.
       setTimeout(function () {
-        var rel = SAGETI.store.importarLinhas(ctx.linhas, {
+        SAGETI.store.importarLinhas(ctx.linhas, {
           criarOpcoes: ctx.criarOpcoes,
           atualizarExistentes: ctx.atualizarExistentes
+        }).then(function (rel) {
+          UI.fecharModal();
+          UI.toast('success', 'Importação concluída',
+            rel.criados + ' criado(s), ' + rel.atualizados + ' atualizado(s), ' +
+            rel.ignorados + ' ignorado(s), ' + rel.recusados + ' recusado(s).', 9000);
+
+          if (rel.opcoesCriadas.length) {
+            UI.toast('info', rel.opcoesCriadas.length + ' opção(ões) cadastrada(s)',
+              'Novos valores entraram nas listas. Revise em Configurações → Listas.', 9000);
+          }
+          if (SAGETI.app && SAGETI.app.navegar) SAGETI.app.navegar('estoque');
+        }).catch(function (erro) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '<span>Importar</span>'; }
+          UI.toast('error', 'Falha na importação', erro.message);
         });
-
-        UI.fecharModal();
-        UI.toast('success', 'Importação concluída',
-          rel.criados + ' criado(s), ' + rel.atualizados + ' atualizado(s), ' +
-          rel.ignorados + ' ignorado(s), ' + rel.recusados + ' recusado(s).', 9000);
-
-        if (rel.opcoesCriadas.length) {
-          UI.toast('info', rel.opcoesCriadas.length + ' opção(ões) cadastrada(s)',
-            'Novos valores entraram nas listas. Revise em Configurações → Listas.', 9000);
-        }
-        if (SAGETI.app && SAGETI.app.navegar) SAGETI.app.navegar('estoque');
       }, 40);
     }
 
