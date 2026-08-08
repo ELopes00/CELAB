@@ -34,12 +34,12 @@ Por baixo dos panos são contas do Firebase Authentication (`admin@sagi-ti.local
 
 ### Dados compartilhados, não por navegador
 
-Diferente da versão anterior (que guardava tudo em `localStorage`), equipamentos e
-movimentações agora vivem no **Firestore**: qualquer pessoa autenticada, em qualquer
-computador, vê e edita o mesmo estoque, em tempo real (`onSnapshot`, sem precisar
-recarregar a página). As regras de acesso ficam em [firestore.rules](firestore.rules).
-As **listas editáveis** (status, setores, técnicos, modelos, TTR) continuam no
-`localStorage` de cada navegador — ver Limitações conhecidas.
+Diferente da versão anterior (que guardava tudo em `localStorage`), equipamentos,
+movimentações **e as listas editáveis** (status, setores, técnicos, modelos, TTR) vivem
+no **Firestore**: qualquer pessoa autenticada, em qualquer computador, vê e edita o
+mesmo estoque e as mesmas listas, em tempo real (`onSnapshot`, sem precisar recarregar a
+página) — adicionar um técnico ou renomear um setor aparece na hora pra todo mundo
+logado. As regras de acesso ficam em [firestore.rules](firestore.rules).
 
 ---
 
@@ -420,25 +420,23 @@ autenticação de verdade), com uma stack diferente:
 
 | Camada | Antes | Agora |
 |---|---|---|
-| Dados | `localStorage` | Firestore (`equipamentos`, `movimentacoes`) |
+| Dados | `localStorage` | Firestore (`equipamentos`, `movimentacoes`, `listas`) |
 | Tempo real | `BroadcastChannel` (só entre abas da mesma máquina) | `onSnapshot` do Firestore (entre qualquer cliente autenticado) |
 | Login | array local, senha em texto puro | Firebase Authentication (e-mail/senha) |
 | Autorização | só na UI | reforçada nas [firestore.rules](firestore.rules) (admin/tecnico) |
-| Frontend | — | o mesmo; só `js/store.js` fala com o Firebase — as 7 páginas não mudaram de API |
+| Frontend | — | o mesmo; só `js/store.js` e `js/listas.js` falam com o Firebase — as 7 páginas não mudaram de API |
 
 `js/store.js` mantém `estado.equipamentos`/`estado.movimentacoes` como espelho em
 memória, atualizado pelos listeners `onSnapshot` — por isso toda função de leitura
 (`listarEquipamentos`, `resumo`…) continua síncrona; só as escritas
-(`registrarEntrada`, `criarEquipamento`…) viraram `Promise`.
-
-**Ainda não migradas:** as listas editáveis (status, setores, técnicos, modelos, TTR)
-continuam no `localStorage` de cada navegador — ver Limitações conhecidas.
+(`registrarEntrada`, `criarEquipamento`…) viraram `Promise`. `js/listas.js` segue o
+mesmo espírito, mas mantém as mutações (`adicionar`, `renomear`, `excluir`…) totalmente
+síncronas: elas editam o espelho em memória na hora e devolvem o resultado imediato
+(o `gerenciador.js` depende disso), e gravam no Firestore em segundo plano, de forma
+otimista — se a gravação falhar, um aviso aparece, mas a edição local não é desfeita.
 
 ### Fase 3 — se o escopo crescer
 
-- **Migrar as listas editáveis para o Firestore também** (coleção `listas`, já prevista
-  em `firestore.rules`) — hoje é a maior inconsistência: dois técnicos em máquinas
-  diferentes podem ver setores/status diferentes se um deles personalizar a lista local.
 - **Reescrever `tests/autoteste.html`** para a API assíncrona atual (ver aviso na seção 7).
 - **Next.js 15 + TypeScript + TanStack Query** — só se surgirem muitas telas novas, SSR
   ou necessidade de tipagem forte; o Firebase já no lugar permite migrar o frontend
@@ -451,10 +449,6 @@ continuam no `localStorage` de cada navegador — ver Limitações conhecidas.
 
 ## 9. Limitações conhecidas
 
-- **Listas editáveis não são compartilhadas.** Status, setores, técnicos, modelos e TTR
-  continuam no `localStorage` de cada navegador — só equipamentos e movimentações estão
-  no Firestore. Dois técnicos em máquinas diferentes podem ver essas listas divergentes
-  se uma delas for personalizada. Ver Fase 3.
 - **Exige internet.** Sem conexão com o Firebase, o sistema não abre (login e dados
   dependem de rede) — diferente da versão anterior, que funcionava 100% offline.
 - **Sem controle de concorrência forte.** Duas edições no mesmo tombo ao mesmo tempo: a

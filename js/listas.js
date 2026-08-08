@@ -2,26 +2,36 @@
    SAGE-TI — Listas editáveis (Status, TTR, Setores, Técnicos, Modelos…)
    --------------------------------------------------------------------------
    Nenhuma lista de seleção é fixa no código. Tudo o que aparece em um <select>
-   vem daqui, é gravado no navegador e pode ser criado, renomeado, reordenado
-   ou removido pela interface (Configurações → Listas).
+   vem daqui e pode ser criado, renomeado, reordenado ou removido pela
+   interface (Configurações → Listas) — compartilhado por todo mundo via
+   Firestore (coleção `listas`, um documento por chave).
+
+   Toda mutação (adicionar/renomear/excluir/…) continua SÍNCRONA: ela edita
+   `listas` (o espelho em memória) na hora e devolve o resultado imediato —
+   gerenciador.js depende disso. A gravação no Firestore acontece em segundo
+   plano, otimista (não desfaz a edição local se falhar; só avisa). Mudanças
+   feitas por OUTRO cliente chegam pelos listeners `onSnapshot`, montados uma
+   vez por chave, que atualizam `listas` e notificam os mesmos assinantes.
 
    Regras que este módulo garante:
      · rótulo é a chave — nada de duplicado (comparação sem acento/caixa);
      · renomear uma opção reescreve os registros que a usavam, para o
        histórico não ficar apontando para um rótulo que não existe mais;
-     · excluir uma opção em uso é bloqueado, com a contagem de registros;
-     · novas opções de fábrica entram em bases antigas sem apagar as
-       customizações do usuário (merge por rótulo na inicialização).
+     · excluir uma opção em uso é bloqueado, com a contagem de registros.
    ========================================================================== */
 
 (function (SAGETI) {
   'use strict';
 
-  var KEY = SAGETI.APP.listasKey;
+  // As 8 listas de texto/objeto + o mapa modelo->categoria — cada uma é um
+  // documento em /listas/{chave} no Firestore.
+  var CHAVES = ['status', 'ttrEntrada', 'ttrSaida', 'equipamentos', 'modelos', 'predios', 'setores', 'tecnicos'];
+  var TODAS_AS_CHAVES = CHAVES.concat(['modelosPorEquipamento']);
 
-  var listas = null;         // estado em memória
+  var listas = null;         // estado em memória — sempre disponível (parte do padrão de fábrica)
   var ouvintes = [];
-  var canal = null;
+  var pararListeners = [];   // cancela() de cada onSnapshot ligado
+  var ecoPendente = {};      // chave -> true logo após uma escrita local, pra ignorar o próprio eco
 
   /* ---------- Comparação tolerante ----------------------------------------- */
 
@@ -53,41 +63,21 @@
     return -1;
   }
 
-  /* ---------- Persistência -------------------------------------------------- */
-
-  function gravar() {
-    try {
-      window.localStorage.setItem(KEY, JSON.stringify(listas));
-    } catch (e) {
-      console.warn('[SAGE-TI] Não foi possível gravar as listas:', e);
-    }
-  }
-
-  function ler() {
-    try {
-      var bruto = window.localStorage.getItem(KEY);
-      return bruto ? JSON.parse(bruto) : null;
-    } catch (e) {
-      return null;
-    }
-  }
-
   /**
-   * Incorpora opções de fábrica que ainda não existem na base do usuário,
-   * preservando tudo o que ele já customizou. É isto que faz uma atualização
-   * do sistema trazer status novos sem sobrescrever as listas em uso.
+   * Incorpora opções de fábrica que ainda não existem em `atual`, preservando
+   * tudo que já está lá. Usado só na restauração de um backup JSON (o
+   * Firestore em si já nasce com o padrão de fábrica, via seed).
    */
   function mesclarPadroes(atual) {
     var padrao = SAGETI.listasPadrao();
     var novidades = 0;
 
-    ['ttrEntrada', 'ttrSaida', 'equipamentos', 'modelos', 'predios', 'setores', 'tecnicos']
-      .forEach(function (nome) {
-        if (!Array.isArray(atual[nome])) { atual[nome] = padrao[nome].slice(); novidades += atual[nome].length; return; }
-        padrao[nome].forEach(function (item) {
-          if (indiceTexto(atual[nome], item) === -1) { atual[nome].push(item); novidades++; }
-        });
+    CHAVES.filter(function (c) { return c !== 'status'; }).forEach(function (nome) {
+      if (!Array.isArray(atual[nome])) { atual[nome] = padrao[nome].slice(); novidades += atual[nome].length; return; }
+      padrao[nome].forEach(function (item) {
+        if (indiceTexto(atual[nome], item) === -1) { atual[nome].push(item); novidades++; }
       });
+    });
 
     if (!Array.isArray(atual.status)) atual.status = [];
     padrao.status.forEach(function (s) {
@@ -120,33 +110,99 @@
     return novidades;
   }
 
-  function inicializar() {
-    var salvo = ler();
-    if (salvo) {
-      listas = salvo;
-      var novas = mesclarPadroes(listas);
-      if (novas) gravar();
+  /* ---------- Persistência (Firestore) --------------------------------------
+     Cada chave é um documento em /listas/{chave}. `status` e as listas de
+     texto guardam `{ itens: [...] }`; `modelosPorEquipamento` guarda
+     `{ mapa: {...} }` — formatos diferentes, únicos dois casos tratados aqui.
+     ---------------------------------------------------------------------- */
+
+  function colListas() { return SAGETI.fb.db.collection('listas'); }
+
+  function payloadDoc(chave) {
+    return chave === 'modelosPorEquipamento'
+      ? { mapa: listas.modelosPorEquipamento || {} }
+      : { itens: listas[chave] || [] };
+  }
+
+  function aplicarDoc(chave, dados) {
+    if (chave === 'modelosPorEquipamento') {
+      listas.modelosPorEquipamento = (dados && dados.mapa) || {};
     } else {
-      listas = SAGETI.listasPadrao();
-      gravar();
+      listas[chave] = (dados && dados.itens) || [];
     }
-    iniciarRealtime();
+  }
+
+  /** Grava as chaves indicadas no Firestore — otimista: não desfaz a edição local se falhar. */
+  function gravarFirestore(chaves) {
+    chaves.forEach(function (chave) {
+      ecoPendente[chave] = true;
+      colListas().doc(chave).set(payloadDoc(chave)).catch(function (erro) {
+        console.error('[SAGE-TI] Falha ao sincronizar a lista "' + chave + '" no Firestore:', erro);
+        if (SAGETI.ui && SAGETI.ui.toast) {
+          SAGETI.ui.toast('warn', 'Lista não sincronizada',
+            '"' + chave + '" ficou salva só neste navegador — tente de novo daqui a pouco.');
+        }
+      });
+    });
+  }
+
+  /** Liga um listener por chave; ignora o eco da própria escrita otimista. */
+  function ligarListenersListas() {
+    desligarListenersListas();
+    TODAS_AS_CHAVES.forEach(function (chave) {
+      var cancelar = colListas().doc(chave).onSnapshot(function (doc) {
+        if (ecoPendente[chave]) { ecoPendente[chave] = false; return; }
+        if (!doc.exists) return; // documento ainda não semeado — mantém o padrão de fábrica em memória
+        aplicarDoc(chave, doc.data());
+        var det = { tipo: 'listas', lista: chave, externo: true };
+        ouvintes.forEach(function (fn) {
+          try { fn(det, listas); } catch (e) { console.error(e); }
+        });
+        if (SAGETI.store && SAGETI.store.notificarListas) SAGETI.store.notificarListas(det);
+      }, function (erro) {
+        console.error('[SAGE-TI] Falha ao observar a lista "' + chave + '":', erro);
+      });
+      pararListeners.push(cancelar);
+    });
+  }
+
+  function desligarListenersListas() {
+    pararListeners.forEach(function (cancelar) { cancelar(); });
+    pararListeners = [];
+    ecoPendente = {};
+  }
+
+  function inicializar() {
+    // Padrão de fábrica sempre disponível na hora — os documentos reais do
+    // Firestore chegam pelo onSnapshot assim que a autenticação resolver
+    // (as regras exigem usuário logado), substituindo o que for diferente.
+    listas = SAGETI.listasPadrao();
+    if (SAGETI.auth) {
+      SAGETI.auth.aoMudar(function (usuario) {
+        if (usuario) ligarListenersListas();
+        else desligarListenersListas();
+      });
+    }
     return listas;
   }
 
-  /* ---------- Notificação e sincronização entre abas ------------------------ */
+  /* ---------- Notificação ---------------------------------------------------- */
 
   function emitir(evento) {
-    gravar();
     var det = evento || { tipo: 'listas' };
     ouvintes.forEach(function (fn) {
       try { fn(det, listas); } catch (e) { console.error(e); }
     });
-    if (canal) {
-      try { canal.postMessage({ tipo: 'listas', evento: det }); } catch (e) { /* ignora */ }
-    }
     // Páginas que desenham selects reagem ao store; um sync mantém tudo junto.
     if (SAGETI.store && SAGETI.store.notificarListas) SAGETI.store.notificarListas(det);
+
+    // Sincroniza no Firestore: se o evento não diz qual chave mudou (reset
+    // geral, importação, lote de `garantir`), grava tudo por segurança.
+    var chaves = det.lista ? [det.lista] : TODAS_AS_CHAVES;
+    if (det.lista === 'modelos' || det.lista === 'equipamentos') {
+      chaves = chaves.concat(['modelosPorEquipamento']);
+    }
+    gravarFirestore(chaves);
   }
 
   function assinar(fn) {
@@ -155,24 +211,6 @@
       var i = ouvintes.indexOf(fn);
       if (i > -1) ouvintes.splice(i, 1);
     };
-  }
-
-  function iniciarRealtime() {
-    if (!('BroadcastChannel' in window)) return;
-    try {
-      canal = new BroadcastChannel(SAGETI.APP.channel + '-listas');
-      canal.onmessage = function () {
-        var salvo = ler();
-        if (!salvo) return;
-        listas = salvo;
-        ouvintes.forEach(function (fn) {
-          try { fn({ tipo: 'listas', externo: true }, listas); } catch (e) { console.error(e); }
-        });
-        if (SAGETI.store && SAGETI.store.notificarListas) {
-          SAGETI.store.notificarListas({ tipo: 'listas', externo: true });
-        }
-      };
-    } catch (e) { canal = null; }
   }
 
   /* ---------- Leitura ------------------------------------------------------- */
