@@ -23,8 +23,10 @@
           '<div class="logo-slot__caption"></div>' +
         '</div>' +
 
-        '<h1 class="login-title">' + SAGETI.util.esc(SAGETI.APP.nome) + '</h1>' +
-        '<p class="login-sub" style="margin-top:-10px;font-size:12px">' + SAGETI.util.esc(SAGETI.APP.descricao) + '</p>' +
+        '<div class="login-header">' +
+          '<h1 class="login-title">' + SAGETI.util.esc(SAGETI.APP.nome) + '</h1>' +
+          '<p class="login-desc">' + SAGETI.util.esc(SAGETI.APP.descricao) + '</p>' +
+        '</div>' +
         '<p class="login-sub">Informe suas credenciais para acessar o sistema</p>' +
 
         '<form id="form-login" novalidate autocomplete="on">' +

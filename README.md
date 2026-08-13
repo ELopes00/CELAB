@@ -5,7 +5,10 @@ Registra entradas, saídas e alterações; mantém o inventário e a dashboard s
 em tempo real, **entre todos os operadores** (Firebase/Firestore); exporta inventário e
 relatórios em **XLSX** e **PDF**.
 
-**Publicado em:** https://sagi-ti.web.app
+**Publicado em:** https://sage-ti.web.app
+(`sagi-ti.web.app` continua no ar só como redirecionamento — o projeto Firebase
+se chama `sagi-ti`, mas não dá pra renomear depois de criado, então o site de
+Hosting `sage-ti` é quem serve o app de verdade.)
 
 ---
 
@@ -13,7 +16,7 @@ relatórios em **XLSX** e **PDF**.
 
 ### Acessar
 
-Abra https://sagi-ti.web.app — exige internet (fala com o Firebase; não funciona aberto
+Abra https://sage-ti.web.app — exige internet (fala com o Firebase; não funciona aberto
 direto do disco nem totalmente offline). Para rodar localmente durante o desenvolvimento,
 sirva a pasta por HTTP (`python servidor.py`, depois `http://localhost:8080`) — o
 `index.html` aponta pro mesmo projeto Firebase de produção.
