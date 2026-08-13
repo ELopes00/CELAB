@@ -20,7 +20,7 @@
 
   /* ---------- Estado do drill-down ---------------------------------------- */
 
-  var filtro = { modelo: '', tom: '', status: '', equipamento: '', predio: '' };
+  var filtro = { modelo: '', tom: '', status: '', equipamento: '', predio: '', grupo: '' };
   // Rótulo exibido -> tom técnico do status. Mantém a UI legível e a regra fiel.
   var TONS_DONUT = [
     { rotulo: 'Disponível',   tom: 'good' },
@@ -40,12 +40,36 @@
     return m ? m.rotulo : '';
   }
 
+  // "Composição do estoque" em 4 grupos de destino — Disponível absorve tudo
+  // que já soma ou volta ao estoque (Estoque, Aquisição, Devolução íntegra,
+  // Empréstimo devolvido); Leilão absorve tudo que está com defeito (Leilão,
+  // Devolução Eq. Obsoleto, Defeito, Devolução por Defeito), já que os dois
+  // primeiros já indicam "vai a leilão" e os dois de defeito seguem pra lá
+  // pela mesma regra de negócio do Fluxo.
+  var FATIAS_DONUT = [
+    { rotulo: 'Disponível', tom: 'good',
+      statuses: ['Estoque', 'Entrada de Estoque', 'Devolução', 'Devolução Empréstimo'] },
+    { rotulo: 'Manutenção', tom: 'warning', statuses: ['Manutenção'] },
+    { rotulo: 'Leilão', tom: 'serious',
+      statuses: ['Leilão', 'Devolução Eq. Obsoleto', 'Defeito', 'Devolucao Defeito'] },
+    { rotulo: 'Doação', statusCor: 'Doação', statuses: ['Doação'] }
+  ];
+  // Todo status coberto por algum grupo acima — o que sobrar vira "Outros".
+  var STATUS_COBERTOS_DONUT = FATIAS_DONUT.reduce(function (acc, f) {
+    return acc.concat(f.statuses);
+  }, []);
+
+  function statusesDoGrupoDonut(rotulo) {
+    var g = FATIAS_DONUT.find(function (f) { return f.rotulo === rotulo; });
+    return g ? g.statuses : [];
+  }
+
   function temFiltro() {
-    return !!(filtro.modelo || filtro.tom || filtro.status || filtro.equipamento || filtro.predio);
+    return !!(filtro.modelo || filtro.tom || filtro.status || filtro.equipamento || filtro.predio || filtro.grupo);
   }
 
   function limparFiltros() {
-    filtro = { modelo: '', tom: '', status: '', equipamento: '', predio: '' };
+    filtro = { modelo: '', tom: '', status: '', equipamento: '', predio: '', grupo: '' };
   }
 
   /* ---------- Recorte ------------------------------------------------------
@@ -57,6 +81,10 @@
     return SAGETI.store.estoqueLaboratorio().filter(function (e) {
       if (filtro.modelo && exceto !== 'modelo' && e.modelo !== filtro.modelo) return false;
       if (filtro.equipamento && exceto !== 'equipamento' && e.equipamento !== filtro.equipamento) return false;
+      if (filtro.grupo && exceto !== 'grupo') {
+        var g = FATIAS_DONUT.find(function (f) { return f.rotulo === filtro.grupo; });
+        if (!g || g.statuses.indexOf(e.status) === -1) return false;
+      }
       if (filtro.predio && exceto !== 'predio' && e.predioOrigem !== filtro.predio) return false;
       if (filtro.tom && exceto !== 'tom') {
         if ((L.statusMeta(e.status).tom || 'neutral') !== filtro.tom) return false;
@@ -75,14 +103,14 @@
     return mapa;
   }
 
-  function porTom(lista) {
-    var mapa = { good: 0, info: 0, warning: 0, serious: 0, critical: 0, neutral: 0 };
-    lista.forEach(function (e) {
-      var t = L.statusMeta(e.status).tom || 'neutral';
-      if (mapa[t] === undefined) mapa[t] = 0;
-      mapa[t]++;
-    });
-    return mapa;
+  /** Itens cujo status está em `statuses` (aceita um status só ou uma lista deles). */
+  function porStatusLista(lista, statuses) {
+    var alvo = Array.isArray(statuses) ? statuses : [statuses];
+    return lista.filter(function (e) { return alvo.indexOf(e.status) > -1; });
+  }
+
+  function porTomLista(lista, tom) {
+    return lista.filter(function (e) { return (L.statusMeta(e.status).tom || 'neutral') === tom; });
   }
 
   /* ---------- Esqueleto ----------------------------------------------------- */
@@ -216,6 +244,7 @@
     if (filtro.tom) chip('tom', 'Situação', rotuloDoTom(filtro.tom));
     if (filtro.status) chip('status', 'Status', filtro.status);
     if (filtro.predio) chip('predio', 'Prédio', filtro.predio);
+    if (filtro.grupo) chip('grupo', 'Composição', filtro.grupo);
 
     return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:2px">' +
       '<span style="font-size:12px;color:var(--text-secondary)">Filtros ativos:</span>' +
@@ -225,13 +254,33 @@
       '</div>';
   }
 
-  /* ---------- KPIs ---------------------------------------------------------- */
+  /* ---------- KPIs -----------------------------------------------------------
+     Clicáveis: cada card abre um modal com Equipamento/Modelo/Tombo — mesma
+     interação dos Painéis de Fluxo. Os status granulares (Devolução,
+     Doação, Substituição...) ficam só nos Painéis de Fluxo; aqui a
+     granularidade equivalente entra pelo donut "Composição do estoque" (ver
+     desenhar()), não duplicando cards.
+     ---------------------------------------------------------------------- */
 
-  function kpisHTML(lista, tons) {
-    function tile(classe, rotulo, valor, rodape, hero) {
-      return '<div class="stat ' + classe + (hero ? ' stat--hero' : '') + '">' +
+  var detalhesKpi = {}; // chave -> { titulo, lista } — repovoado a cada kpisHTML()
+
+  /** Aceita um status real (resolve a cor por SAGETI.statusCores) ou um valor CSS pronto (#hex / var(--x)). */
+  function corAccentKpi(chave) {
+    if (!chave) return '';
+    if (chave.charAt(0) === '#' || chave.indexOf('var(') === 0) return chave;
+    return (SAGETI.statusCores && SAGETI.statusCores.hex(chave)) || '';
+  }
+
+  function kpisHTML(lista) {
+    detalhesKpi = {};
+
+    function tile(chave, corChave, rotulo, sublista, rodape, hero) {
+      detalhesKpi[chave] = { titulo: rotulo, lista: sublista };
+      var accent = corAccentKpi(corChave);
+      return '<div class="stat' + (hero ? ' stat--hero' : '') + '" data-kpi="' + chave + '" ' +
+        'role="button" tabindex="0" style="cursor:pointer' + (accent ? ';--stat-accent:' + accent : '') + '">' +
         '<div class="stat__label"><span class="dot"></span>' + U.esc(rotulo) + '</div>' +
-        '<div class="stat__value">' + U.numero(valor) + '</div>' +
+        '<div class="stat__value">' + U.numero(sublista.length) + '</div>' +
         '<div class="stat__foot">' + U.esc(rodape) + '</div>' +
         '</div>';
     }
@@ -243,12 +292,17 @@
         U.numero(SAGETI.store.resumo().totalFora) + ' fora do laboratório';
 
     return '' +
-      tile('stat--brand', temFiltro() ? 'Equipamentos no recorte' : 'Equipamentos no laboratório',
-        lista.length, rodapeHero, true) +
-      tile('stat--good', 'Disponíveis em estoque', tons.good || 0, 'Prontos para disponibilização') +
-      tile('stat--warning', 'Em manutenção', tons.warning || 0, 'Em reparo no laboratório') +
-      tile('stat--critical', 'Com defeito', tons.critical || 0, 'Aguardando destinação') +
-      tile('stat--serious', 'Para leilão', tons.serious || 0, 'Baixados do patrimônio ativo');
+      tile('hero', 'var(--brand)', temFiltro() ? 'Equipamentos no recorte' : 'Equipamentos no laboratório',
+        lista, rodapeHero, true) +
+      tile('good', 'var(--status-good)', 'Disponíveis em estoque',
+        porStatusLista(lista, statusesDoGrupoDonut('Disponível')),
+        'Estoque, aquisição e devoluções (com ou sem empréstimo) já íntegras') +
+      tile('manutencao', 'var(--status-warning)', 'Em manutenção', porTomLista(lista, 'warning'),
+        'Em reparo no laboratório') +
+      tile('defeito', 'var(--status-critical)', 'Com defeito', porTomLista(lista, 'critical'),
+        'Aguardando destinação') +
+      tile('leilao', 'var(--status-serious)', 'Para leilão', porTomLista(lista, 'serious'),
+        'Baixados do patrimônio ativo');
   }
 
   /* ---------- Render -------------------------------------------------------- */
@@ -260,7 +314,7 @@
     // Recorte principal (todos os filtros) e recortes por dimensão.
     var base = recorte();
     var listaTipo = recorte('equipamento');   // barras de tipo: sem o filtro de tipo
-    var listaStatus = recorte('tom');         // donut: sem o filtro de situação
+    var listaStatus = recorte('grupo');       // donut: sem o filtro de composição
     var listaPredio = recorte('predio');      // prédios: sem o filtro de prédio
 
     /* --- cabeçalho, chips e KPIs --- */
@@ -268,7 +322,7 @@
       'Atualizado às ' + new Date().toLocaleTimeString('pt-BR',
         { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     container.querySelector('#dash-chips').innerHTML = chipsHTML();
-    container.querySelector('#dash-kpis').innerHTML = kpisHTML(base, porTom(base));
+    container.querySelector('#dash-kpis').innerHTML = kpisHTML(base);
 
     /* --- 1. Estoque por tipo (clicável) --- */
     var dadosTipo = agrupar(listaTipo, 'equipamento');
@@ -294,22 +348,26 @@
         })
         .map(function (i) { return [{ texto: i.rotulo, cor: p.series[0] }, U.numero(i.valor)]; }));
 
-    /* --- 2. Composição por situação (donut clicável) --- */
-    var tonsStatus = porTom(listaStatus);
-    var fatias = TONS_DONUT.map(function (t) {
+    /* --- 2. Composição por situação (donut clicável) — 4 grupos de destino --- */
+    var fatias = FATIAS_DONUT.map(function (f) {
       return {
-        rotulo: t.rotulo,
-        cor: t.tom === 'info' ? p.series[0] : (p.status[t.tom] || p.status.neutral),
-        valor: tonsStatus[t.tom] || 0
+        rotulo: f.rotulo,
+        cor: f.tom ? p.status[f.tom] : SAGETI.statusCores.hex(f.statusCor),
+        valor: porStatusLista(listaStatus, f.statuses).length
       };
-    }).filter(function (f) { return f.valor > 0; });
+    });
+    // Qualquer status fora do mapa acima (ex.: criado pelo usuário) some aqui,
+    // não do total — mesma garantia que o teste automatizado já cobra hoje.
+    var outros = listaStatus.filter(function (e) { return STATUS_COBERTOS_DONUT.indexOf(e.status) === -1; });
+    if (outros.length) fatias.push({ rotulo: 'Outros', cor: p.status.neutral, valor: outros.length });
+    fatias = fatias.filter(function (f) { return f.valor > 0; });
 
     SAGETI.charts.donutStatus('grafico-status', fatias, {
-      selecionado: rotuloDoTom(filtro.tom),
+      selecionado: filtro.grupo,
       rotuloCentro: temFiltro() ? 'no recorte' : 'no laboratório',
       aoClicar: function (rotulo) {
-        var tom = tomDoRotulo(rotulo);
-        filtro.tom = (tom && tom !== filtro.tom) ? tom : '';
+        if (rotulo === 'Outros') return; // fatia de segurança, sem grupo único para filtrar
+        filtro.grupo = (rotulo && rotulo !== filtro.grupo) ? rotulo : '';
         sincronizarCampos(container);
         desenhar(container);
       }
@@ -427,6 +485,12 @@
     container.addEventListener('click', function (e) {
       var alvo;
 
+      if ((alvo = e.target.closest('[data-kpi]'))) {
+        var info = detalhesKpi[alvo.getAttribute('data-kpi')];
+        if (info) UI.modalEquipamentos(info.titulo, info.lista);
+        return;
+      }
+
       if ((alvo = e.target.closest('[data-remover]'))) {
         filtro[alvo.getAttribute('data-remover')] = '';
         sincronizarCampos(container);
@@ -458,6 +522,15 @@
           painel.classList.toggle('hidden', painel.getAttribute('data-vista-alvo') !== modo);
         });
       }
+    });
+
+    // Teclado: os cards de KPI são focáveis (role="button"); Enter/Espaço ativa.
+    container.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      var alvo = e.target.closest('[data-kpi]');
+      if (!alvo) return;
+      e.preventDefault();
+      alvo.click();
     });
 
     // Esc limpa o drill-down — saída rápida de qualquer recorte.

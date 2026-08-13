@@ -274,6 +274,29 @@
     });
   }
 
+  /**
+   * Modal padrão para "o que compõe este número": lista Equipamento/Modelo/
+   * Tombo de cada registro de `lista` (equipamentos ou movimentações — ambos
+   * têm esses três campos). Usado pelos KPIs clicáveis da Dashboard e dos
+   * Painéis de Fluxo, para os dois falarem a mesma língua ao detalhar um
+   * número.
+   */
+  function modalEquipamentos(titulo, lista) {
+    var corpo = !lista.length
+      ? '<p style="font-size:13px;color:var(--text-muted);margin:0">' +
+        'Nenhum equipamento nesta categoria no momento.</p>'
+      : '<div style="max-height:min(60vh,420px);overflow:auto">' +
+        SAGETI.charts.tabelaHTML(['Equipamento', 'Modelo', 'Tombo'], lista.map(function (e) {
+          return [e.equipamento || '—', e.modelo || '—', e.tomboNovo || e.tomboAntigo || '—'];
+        })) +
+        '</div>';
+    modal({
+      titulo: titulo,
+      subtitulo: lista.length === 1 ? '1 equipamento' : lista.length + ' equipamentos',
+      corpo: corpo
+    });
+  }
+
   /* ---------- Construtores de campo ------------------------------------------ */
 
   /** <option> list a partir de um array. */
@@ -535,6 +558,7 @@
     modal: modal,
     fecharModal: fecharModal,
     confirmar: confirmar,
+    modalEquipamentos: modalEquipamentos,
     opcoes: opcoes,
     opcoesCom: opcoesCom,
     selectGerenciavel: selectGerenciavel,

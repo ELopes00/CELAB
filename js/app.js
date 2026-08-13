@@ -14,6 +14,7 @@
     { id: 'entrada',       rotulo: 'Entrada de Equipamentos',icone: 'entrada',   secao: 'Movimentação' },
     { id: 'saida',         rotulo: 'Saída de Equipamentos',  icone: 'saida',     secao: 'Movimentação' },
     { id: 'relatorios',    rotulo: 'Relatórios e Filtros',   icone: 'relatorio', secao: 'Análise' },
+    { id: 'fluxo',         rotulo: 'Painéis de Fluxo',       icone: 'grafico',   secao: 'Análise' },
     { id: 'configuracoes', rotulo: 'Configurações',          icone: 'engrenagem', secao: 'Sistema' }
   ];
 
