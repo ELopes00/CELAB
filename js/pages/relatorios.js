@@ -33,7 +33,9 @@
     if (filtros.tipo)        lista = lista.filter(function (m) { return m.tipo === filtros.tipo; });
     if (filtros.predio)      lista = lista.filter(function (m) { return m.predio === filtros.predio; });
     if (filtros.setor)       lista = lista.filter(function (m) { return m.setor === filtros.setor; });
-    if (filtros.status)      lista = lista.filter(function (m) { return m.statusResultante === filtros.status; });
+    if (filtros.status && statusValido(filtros.status)) {
+      lista = lista.filter(function (m) { return m.statusResultante === filtros.status; });
+    }
     if (filtros.equipamento) lista = lista.filter(function (m) { return m.equipamento === filtros.equipamento; });
     if (filtros.modelo)      lista = lista.filter(function (m) { return m.modelo === filtros.modelo; });
     if (filtros.tecnico)     lista = lista.filter(function (m) { return m.tecnico === filtros.tecnico; });
@@ -67,6 +69,12 @@
     return Object.keys(filtros).some(function (k) { return !!filtros[k]; });
   }
 
+  /** Só confia no filtro de status se pertencer à lista fechada de status
+      válidos — defesa contra parameter tampering (ver estoque.js). */
+  function statusValido(v) {
+    return !v || L.statusTodos().indexOf(v) > -1;
+  }
+
   function rotuloFiltro() {
     var p = [];
     if (filtros.de || filtros.ate) {
@@ -76,7 +84,7 @@
     if (filtros.tipo)        p.push('Tipo: ' + SAGETI.tipoMovMeta(filtros.tipo).rotulo);
     if (filtros.predio)      p.push('Prédio: ' + filtros.predio);
     if (filtros.setor)       p.push('Setor: ' + filtros.setor);
-    if (filtros.status)      p.push('Status: ' + filtros.status);
+    if (statusValido(filtros.status) && filtros.status) p.push('Status: ' + filtros.status);
     if (filtros.equipamento) p.push('Equipamento: ' + filtros.equipamento);
     if (filtros.modelo)      p.push('Modelo: ' + filtros.modelo);
     if (filtros.tecnico)     p.push('Técnico: ' + filtros.tecnico);

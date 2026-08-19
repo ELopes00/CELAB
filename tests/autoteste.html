@@ -13,6 +13,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
 </head>
 <body>
   <div id="app"></div>
@@ -44,6 +45,8 @@
   <script src="../js/pages/saida.js"></script>
   <script src="../js/pages/relatorios.js"></script>
   <script src="../js/pages/configuracoes.js"></script>
+  <script src="../js/pages/usuarios.js"></script>
+  <script src="../js/pages/auditoria.js"></script>
   <script defer src="../js/app.js"></script>
 
   <script>
@@ -515,6 +518,138 @@
           }
         });
 
+        /* ---- 9b. Tombo opcional ---- */
+        await t('cadastro sem tombo não colide (item 3 do upgrade)', async function () {
+          var a = await S.criarEquipamento({ equipamento: 'Headset', modelo: 'Logitech', status: 'Estoque' });
+          if (!a.ok) throw new Error('recusou o primeiro sem tombo: ' + a.erro);
+          var b = await S.criarEquipamento({ equipamento: 'Headset', modelo: 'Agem', status: 'Estoque' });
+          if (!b.ok) throw new Error('recusou o segundo sem tombo: ' + b.erro);
+          if (a.equipamento.id === b.equipamento.id) throw new Error('gerou o mesmo id');
+          return 'dois itens sem tombo, sem colisão';
+        });
+
+        /* ---- 9c. Auditoria (append-only) ---- */
+        await t('alteração de status grava na auditoria', async function () {
+          var alvo = S.acharPorTombo({ tomboNovo: '900001' }) || S.listarEquipamentos()[0];
+          var statusOrigem = alvo.status;
+          var statusNovo = statusOrigem === 'Defeito' ? 'Estoque' : 'Defeito';
+          await S.atualizarEquipamento(alvo.id, { status: statusNovo });
+          // `aguardar()` só aceita condicaoFn síncrona — a leitura da auditoria é
+          // assíncrona, então o polling é feito aqui mesmo, não via aguardar().
+          var log = null;
+          var tentativas = 0;
+          while (!log && tentativas < 50) {
+            var r = await S.listarAuditoria(5);
+            log = r.find(function (l) { return l.entidadeId === alvo.id && l.acao === 'AJUSTE_STATUS'; });
+            if (!log) await new Promise(function (res) { setTimeout(res, 300); });
+            tentativas++;
+          }
+          if (!log) throw new Error('nenhum log de AJUSTE_STATUS apareceu em ' + (tentativas * 300) + 'ms');
+          if (log.descricao.indexOf(statusNovo) === -1) throw new Error('descrição não menciona o novo status');
+          return 'log: ' + log.descricao;
+        });
+
+        await t('auditoria não pode ser editada nem apagada (Rules)', async function () {
+          var r = await S.listarAuditoria(1);
+          if (!r.length) throw new Error('sem log para testar');
+          try {
+            await C.fb.db.collection('auditoria').doc(r[0].id).update({ descricao: 'adulterado' });
+            throw new Error('permitiu editar um log de auditoria');
+          } catch (e) {
+            if (!/PERMISSION_DENIED|permission-denied/i.test(e.message || e.code || '')) throw e;
+          }
+          try {
+            await C.fb.db.collection('auditoria').doc(r[0].id).delete();
+            throw new Error('permitiu apagar um log de auditoria');
+          } catch (e) {
+            if (!/PERMISSION_DENIED|permission-denied/i.test(e.message || e.code || '')) throw e;
+          }
+          return 'update e delete bloqueados pelas Rules';
+        });
+
+        /* ---- 9d. Inserção em lote (Cloud Function) ---- */
+        await t('lote de periféricos recusa quantidade fora do limite', async function () {
+          var r = await S.adicionarPerifericosEmLote({ equipamento: 'Headset', modelo: 'Logitech', quantidade: 999999 });
+          if (r.ok) throw new Error('aceitou quantidade 999999');
+          return 'recusado: ' + r.erro;
+        });
+
+        await t('lote de periféricos cria N equipamentos numa transação', async function () {
+          var antes = S.resumo().totalCadastrado;
+          var r = await S.adicionarPerifericosEmLote({ equipamento: 'Headset', modelo: 'Agem', quantidade: 3 });
+          if (!r.ok) throw new Error(r.erro);
+          eq(r.criados, 3, 'criados devolvido pela função');
+          await aguardar(function () { return S.resumo().totalCadastrado === antes + 3; });
+          return (antes + 3) + ' equipamentos após o lote';
+        });
+
+        /* ---- 9e. RBAC — exclusão de usuário (Cloud Function, Admin SDK) ---- */
+        await t('excluirUsuario: bloqueado p/ técnico, auto-exclusão bloqueada, funciona p/ admin', async function () {
+          var emailProbe = 'probe.' + Date.now() + '@sagi-ti.local';
+          var senhaProbe = 'ProbeSenha123!';
+          var probeUid = null;
+
+          // Cria a conta descartável — client SDK permite auto-cadastro, mas
+          // isso troca a sessão ativa para a conta nova: volta pra admin logo em seguida.
+          var cred = await C.fb.auth.createUserWithEmailAndPassword(emailProbe, senhaProbe);
+          probeUid = cred.user.uid;
+          await C.auth.entrar('admin', 'root123');
+          await aguardar(function () { return S.listarEquipamentos().length > 0; });
+
+          await C.fb.db.collection('usuarios').doc(probeUid).set({
+            usuario: 'probe', nome: 'Probe Descartável', perfil: 'tecnico'
+          });
+
+          try {
+            // 1. Técnico tentando excluir → permission-denied vindo do servidor.
+            await C.auth.entrar('tecnico', 'tecnico123');
+            var negado = await S.excluirUsuario(probeUid);
+            if (negado.ok) throw new Error('técnico conseguiu excluir usuário');
+
+            // 2. Admin tentando excluir a própria conta → failed-precondition.
+            await C.auth.entrar('admin', 'root123');
+            var meuUid = C.auth.usuarioAtual().uid;
+            var autoExclusao = await S.excluirUsuario(meuUid);
+            if (autoExclusao.ok) throw new Error('permitiu que o admin excluísse a própria conta');
+
+            // 3. Admin excluindo a conta descartável → sucesso de verdade.
+            var sucesso = await S.excluirUsuario(probeUid);
+            if (!sucesso.ok) throw new Error('admin não conseguiu excluir: ' + sucesso.erro);
+
+            var docDepois = await C.fb.db.collection('usuarios').doc(probeUid).get();
+            if (docDepois.exists) throw new Error('documento usuarios/{uid} continua existindo');
+
+            try {
+              await C.fb.auth.signInWithEmailAndPassword(emailProbe, senhaProbe);
+              throw new Error('a conta de Auth ainda consegue logar');
+            } catch (e) {
+              if (!/user-not-found|invalid-credential|invalid-login-credentials/i.test(e.code || '')) throw e;
+            }
+
+            // Busca pelo entidadeId específico, não pelo topo da lista por
+            // `registradoEm desc` — dois logs gravados a poucos ms de
+            // distância (este e o do teste de lote, logo antes) podem empatar
+            // no timestamp do emulador, e o desempate por id do Firestore não
+            // segue ordem de criação. Filtrar por entidadeId é inequívoco.
+            var logExclusao = null;
+            var tentativasAud = 0;
+            while (!logExclusao && tentativasAud < 20) {
+              var snapAud = await C.fb.db.collection('auditoria')
+                .where('entidadeId', '==', probeUid).where('acao', '==', 'EXCLUSAO_USUARIO').limit(1).get();
+              if (!snapAud.empty) logExclusao = snapAud.docs[0].data();
+              else await new Promise(function (res) { setTimeout(res, 300); });
+              tentativasAud++;
+            }
+            if (!logExclusao) throw new Error('sem novo registro em auditoria');
+            eq(logExclusao.acao, 'EXCLUSAO_USUARIO', 'ação registrada');
+
+            return '403 p/ técnico, auto-exclusão bloqueada, exclusão real confirmada (Auth + Firestore + auditoria)';
+          } finally {
+            var voltouAdmin = await C.auth.entrar('admin', 'root123');
+            if (voltouAdmin.ok) await aguardar(function () { return S.listarEquipamentos().length > 0; });
+          }
+        });
+
         /* ---- 10. Camada visual ---- */
         await t('chips de status cobrem os status cadastrados', function () {
           C.STATUS_TODOS.forEach(function (s) {
@@ -657,6 +792,60 @@
           if (vivo && vivo.destruir) vivo.destruir();
           if (depois >= antes && antes > 0) throw new Error('a tabela não diminuiu: ' + antes + ' → ' + depois);
           return antes + ' → ' + depois + ' linha(s)';
+        });
+
+        await t('página "usuarios" monta e lista as contas (admin)', async function () {
+          palco.innerHTML = '';
+          var vivo = C.pages.usuarios.montar(palco, function () {});
+          try {
+            await aguardar(function () { return palco.querySelectorAll('tbody tr').length > 0; }, 3000);
+            var linhas = palco.querySelectorAll('tbody tr').length;
+            if (!linhas) throw new Error('não listou nenhum usuário');
+            return linhas + ' usuário(s) listado(s)';
+          } finally {
+            if (vivo && vivo.destruir) vivo.destruir();
+          }
+        });
+
+        await t('página "auditoria" monta e lista os logs (admin)', async function () {
+          palco.innerHTML = '';
+          var vivo = C.pages.auditoria.montar(palco, function () {});
+          try {
+            await aguardar(function () { return palco.querySelectorAll('tbody tr').length > 0; }, 3000);
+            var linhas = palco.querySelectorAll('tbody tr').length;
+            if (!linhas) throw new Error('não listou nenhum log de auditoria');
+            return linhas + ' log(s) listado(s)';
+          } finally {
+            if (vivo && vivo.destruir) vivo.destruir();
+          }
+        });
+
+        await t('botão "Limpar" do Estoque nunca chama exportação (item 5)', function () {
+          palco.innerHTML = '';
+          var vivo = C.pages.estoque.montar(palco, function () {});
+          var chamouExcel = false, chamouPDF = false;
+          var origExcel = C.exportar.paraExcel, origColorido = C.exportar.paraExcelColorido, origPDF = C.exportar.paraPDF;
+          C.exportar.paraExcel = function () { chamouExcel = true; };
+          C.exportar.paraExcelColorido = function () { chamouExcel = true; };
+          C.exportar.paraPDF = function () { chamouPDF = true; };
+          try {
+            var f = palco.querySelector('#f-status');
+            f.value = 'Estoque';
+            f.dispatchEvent(new Event('change'));
+
+            var btn = palco.querySelector('[data-acao="limpar-filtros"]');
+            if (!btn) throw new Error('botão "Limpar" não encontrado na tela');
+            btn.click();
+
+            if (chamouExcel || chamouPDF) throw new Error('"Limpar" disparou exportação — regressão do item 5');
+            if (f.value !== '') throw new Error('filtro de status não foi resetado');
+            return 'reset de filtros confirmado, zero chamadas de exportação';
+          } finally {
+            C.exportar.paraExcel = origExcel;
+            C.exportar.paraExcelColorido = origColorido;
+            C.exportar.paraPDF = origPDF;
+            if (vivo && vivo.destruir) vivo.destruir();
+          }
         });
 
         palco.remove();

@@ -412,10 +412,16 @@
 
       var acao = e.target.closest('[data-acao]');
       if (!acao) return;
+      // Só reage às duas ações que esta tela realmente tem — um data-acao
+      // desconhecido (ex.: vindo de outra página, se algum listener antigo
+      // vazar) não deve cair num "senão exporta PDF" por padrão.
+      var qual = acao.getAttribute('data-acao');
+      if (qual !== 'excel' && qual !== 'pdf') return;
+
       var lista = saidasFiltradas();
       if (!lista.length) return UI.toast('warn', 'Nada a exportar', 'Nenhuma saída corresponde ao filtro atual.');
 
-      if (acao.getAttribute('data-acao') === 'excel') {
+      if (qual === 'excel') {
         var nomeArq = SAGETI.APP.nome + '_Saidas_' + U.carimbo() + '.xlsx';
         if (SAGETI.exportar.paraExcelColorido) {
           SAGETI.exportar.paraExcelColorido({

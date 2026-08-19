@@ -31,7 +31,9 @@
       lista = lista.filter(function (e) { return !e.noLaboratorio; });
     }
 
-    if (filtros.status) lista = lista.filter(function (e) { return e.status === filtros.status; });
+    if (filtros.status && statusValido(filtros.status)) {
+      lista = lista.filter(function (e) { return e.status === filtros.status; });
+    }
     if (filtros.equipamento) lista = lista.filter(function (e) { return e.equipamento === filtros.equipamento; });
     if (filtros.modelo) lista = lista.filter(function (e) { return e.modelo === filtros.modelo; });
     if (filtros.ttr) lista = lista.filter(function (e) { return e.ttr === filtros.ttr; });
@@ -78,6 +80,8 @@
             UI.icone('excel', 14) + '<span>Excel</span></button>' +
           '<button class="btn btn--outline btn--sm" data-acao="pdf">' +
             UI.icone('pdf', 14) + '<span>PDF</span></button>' +
+          '<button class="btn btn--outline" data-acao="lote">' +
+            UI.icone('plus', 14) + '<span>Adicionar em lote</span></button>' +
           '<button class="btn btn--primary" data-acao="novo">' +
             UI.icone('plus', 16) + '<span>Adicionar Equipamento</span></button>' +
         '</div>' +
@@ -287,7 +291,7 @@
             '<label for="eq-tombo-novo">Tombo Novo</label>' +
             '<input class="input" type="text" id="eq-tombo-novo" name="tomboNovo" inputmode="numeric" ' +
               'value="' + U.esc(ed.tomboNovo || '') + '" placeholder="Ex.: 045112">' +
-            '<span class="field__error">Informe o tombo novo ou o antigo.</span>' +
+            '<span class="field__help">Pode ficar em branco e ser preenchido depois.</span>' +
           '</div>' +
 
           '<div class="field">' +
@@ -410,12 +414,6 @@
 
     var dados = UI.dadosForm(form);
 
-    if (!dados.tomboNovo && !dados.tomboAntigo) {
-      UI.marcarErro(caixa.querySelector('#eq-tombo-novo'), 'Informe o tombo novo ou o antigo.');
-      UI.toast('warn', 'Tombo obrigatório', 'O equipamento precisa de ao menos um número de tombo.');
-      return false;
-    }
-
     var promessa = eq
       ? SAGETI.store.atualizarEquipamento(eq.id, dados)
       : SAGETI.store.criarEquipamento(dados);
@@ -433,6 +431,62 @@
     });
 
     return false;
+  }
+
+  /* ---------- Adicionar em lote (periféricos) --------------------------------
+     Chama a Cloud Function `adicionarPerifericosEmLote` (Admin SDK, batch
+     atômico) — o `max="500"` do input é só UX; quem barra de verdade um
+     "999999" é a validação dentro da função (ver functions/index.js).
+     ---------------------------------------------------------------------- */
+
+  function abrirLote() {
+    var corpo = '<form id="form-lote" novalidate><div class="form-grid">' +
+      '<div class="field">' +
+        '<label for="lote-equip">Categoria / Equipamento <span class="req">*</span></label>' +
+        UI.selectGerenciavel({ id: 'lote-equip', name: 'equipamento', lista: 'equipamentos', obrigatorio: true }) +
+        '<span class="field__error">Selecione o equipamento.</span>' +
+      '</div>' +
+      '<div class="field">' +
+        '<label for="lote-modelo">Modelo <span class="req">*</span></label>' +
+        '<select class="select" id="lote-modelo" name="modelo" data-obrigatorio></select>' +
+        '<span class="field__error">Selecione o modelo.</span>' +
+      '</div>' +
+      '<div class="field">' +
+        '<label for="lote-qtd">Quantidade <span class="req">*</span></label>' +
+        '<input class="input" type="number" id="lote-qtd" name="quantidade" min="1" max="500" value="1" data-obrigatorio>' +
+        '<span class="field__help">Cada unidade entra sem tombo — pode ser preenchido depois.</span>' +
+      '</div>' +
+    '</div></form>';
+
+    var ref = UI.modal({
+      titulo: 'Adicionar periféricos em lote',
+      subtitulo: 'Cria várias unidades iguais de uma vez, direto no estoque',
+      corpo: corpo,
+      botoes: [
+        { texto: 'Cancelar', classe: 'btn--ghost' },
+        {
+          texto: 'Adicionar', classe: 'btn--primary', icone: 'check',
+          acao: function (caixa) {
+            var form = caixa.querySelector('#form-lote');
+            if (!UI.validarForm(form)) {
+              UI.toast('warn', 'Campos obrigatórios', 'Preencha os campos destacados.');
+              return false;
+            }
+            var dados = UI.dadosForm(form);
+            dados.quantidade = Number(dados.quantidade);
+
+            SAGETI.store.adicionarPerifericosEmLote(dados).then(function (r) {
+              if (!r.ok) return UI.toast('error', 'Não foi possível adicionar', r.erro);
+              UI.fecharModal();
+              UI.toast('success', 'Lote adicionado', r.criados + ' item(ns) criado(s).');
+            });
+            return false;
+          }
+        }
+      ]
+    });
+
+    UI.ligarEquipamentoModelo(ref.el.querySelector('#lote-equip'), ref.el.querySelector('#lote-modelo'));
   }
 
   /* ---------- Detalhes ------------------------------------------------------- */
@@ -491,11 +545,18 @@
 
   /* ---------- Exportação ------------------------------------------------------ */
 
+  /** Nunca confia cegamente no valor do filtro de status — só usa se pertencer
+      à lista fechada de status válidos (defesa contra parameter tampering,
+      mesmo o filtro sendo hoje só em memória, sem query nem SQL). */
+  function statusValido(v) {
+    return !v || L.statusTodos().indexOf(v) > -1;
+  }
+
   function rotuloFiltro() {
     var partes = [];
     if (filtros.local === 'lab') partes.push('Somente itens no laboratório');
     if (filtros.local === 'fora') partes.push('Somente itens fora do laboratório');
-    if (filtros.status) partes.push('Status: ' + filtros.status);
+    if (statusValido(filtros.status) && filtros.status) partes.push('Status: ' + filtros.status);
     if (filtros.equipamento) partes.push('Equipamento: ' + filtros.equipamento);
     if (filtros.modelo) partes.push('Modelo: ' + filtros.modelo);
     if (filtros.predio) partes.push('Prédio: ' + filtros.predio);
@@ -589,6 +650,13 @@
           return UI.toast('warn', 'Sem permissão', 'Seu perfil é somente de consulta.');
         }
         return abrirForm(container);
+      }
+
+      if ((alvo = e.target.closest('[data-acao="lote"]'))) {
+        if (!SAGETI.auth.permissao('podeEditar')) {
+          return UI.toast('warn', 'Sem permissão', 'Seu perfil é somente de consulta.');
+        }
+        return abrirLote();
       }
 
       if ((alvo = e.target.closest('[data-acao="limpar-filtros"]'))) {

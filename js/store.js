@@ -60,6 +60,36 @@
   function colEquip() { return SAGETI.fb.db.collection('equipamentos'); }
   function colMov() { return SAGETI.fb.db.collection('movimentacoes'); }
   function colUsuarios() { return SAGETI.fb.db.collection('usuarios'); }
+  function colAuditoria() { return SAGETI.fb.db.collection('auditoria'); }
+
+  /* ---------- Auditoria (append-only) ---------------------------------------
+     Trilha de "quem mudou o quê", separada de `movimentacoes` (que é o
+     histórico operacional de equipamento). As Rules do Firestore bloqueiam
+     update/delete desta coleção para todo mundo, inclusive admin — a
+     imutabilidade é garantida no servidor, não só aqui.
+     -------------------------------------------------------------------- */
+
+  // Nunca gravar nada que pareça senha/token, mesmo por engano do chamador.
+  var PADRAO_SENSIVEL = /senha|password|token/i;
+
+  function registrarAuditoria(acao, entidade, entidadeId, descricao) {
+    var usuarioAtual = SAGETI.auth && SAGETI.auth.usuarioAtual();
+    var texto = String(descricao || '').slice(0, 500);
+    if (PADRAO_SENSIVEL.test(texto)) texto = '[registro omitido — continha termo sensível]';
+
+    return colAuditoria().add({
+      acao: String(acao || '').slice(0, 60),
+      entidade: String(entidade || '').slice(0, 40),
+      entidadeId: String(entidadeId || ''),
+      descricao: texto,
+      usuario: (usuarioAtual && usuarioAtual.usuario) || 'sistema',
+      registradoEm: agora()
+    }).catch(function (erro) {
+      // Auditoria nunca deve travar a operação principal — só registra o
+      // problema no console para investigação.
+      console.error('[SAGE-TI] Falha ao gravar auditoria:', erro);
+    });
+  }
 
   /* ---------- Pub/sub -------------------------------------------------------- */
 
@@ -267,6 +297,12 @@
     var eqAtualizado = Object.assign({}, eq, patch);
 
     return colEquip().doc(id).update(patch).then(function () {
+      if (statusAnterior !== eqAtualizado.status) {
+        registrarAuditoria('AJUSTE_STATUS', 'equipamentos', id,
+          'Status do equipamento ' + (eqAtualizado.tomboNovo || eqAtualizado.tomboAntigo || id) +
+          ' (' + eqAtualizado.equipamento + ') mudou de "' + statusAnterior +
+          '" para "' + eqAtualizado.status + '".');
+      }
       return registrarMovimentacao({
         tipo: 'AJUSTE', data: hoje(), equipamentoId: eqAtualizado.id,
         equipamento: eqAtualizado.equipamento, modelo: eqAtualizado.modelo,
@@ -299,6 +335,9 @@
     if (!eq) return Promise.resolve({ ok: false, erro: 'Equipamento não encontrado.' });
 
     return colEquip().doc(id).delete().then(function () {
+      registrarAuditoria('EXCLUSAO_EQUIPAMENTO', 'equipamentos', id,
+        'Equipamento ' + (eq.tomboNovo || eq.tomboAntigo || id) + ' (' + eq.equipamento +
+        ' — ' + eq.modelo + ') excluído do estoque.');
       return registrarMovimentacao({
         tipo: 'EXCLUSAO', data: hoje(), equipamentoId: eq.id,
         equipamento: eq.equipamento, modelo: eq.modelo,
@@ -312,6 +351,47 @@
     }).catch(function (erro) {
       return { ok: false, erro: 'Falha ao excluir no Firestore: ' + erro.message };
     });
+  }
+
+  /* ---------- Chamadas para as Cloud Functions -------------------------------
+     Só existem duas: operações que o SDK do cliente não pode fazer com
+     segurança sozinho (excluir conta de Auth de verdade; inserir um lote
+     atômico com teto de negócio). Toda validação real está na função — a
+     checagem de `permissao()` aqui é só UX, igual ao padrão já usado em
+     `excluirEquipamento`.
+     -------------------------------------------------------------------- */
+
+  function listarUsuarios() {
+    // Rules: só admin consegue listar a coleção inteira (ver firestore.rules);
+    // um técnico forçando isto pelo console recebe permission-denied.
+    return colUsuarios().get().then(function (snap) {
+      return snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+    });
+  }
+
+  function excluirUsuario(uid) {
+    if (!SAGETI.auth.permissao('podeExcluir')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não tem permissão para excluir usuários.' });
+    }
+    var fn = SAGETI.fb.functions.httpsCallable('excluirUsuario');
+    return fn({ uid: uid })
+      .then(function () { return { ok: true }; })
+      .catch(function (erro) {
+        // 'permission-denied' aqui é decidido no servidor, não pelo botão escondido.
+        return { ok: false, erro: erro.message || 'Falha ao excluir usuário.' };
+      });
+  }
+
+  function adicionarPerifericosEmLote(dados) {
+    if (!SAGETI.auth.permissao('podeEditar')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não pode cadastrar equipamentos.' });
+    }
+    var fn = SAGETI.fb.functions.httpsCallable('adicionarPerifericosEmLote');
+    return fn(dados)
+      .then(function (res) { return { ok: true, criados: res.data.criados }; })
+      .catch(function (erro) {
+        return { ok: false, erro: erro.message || 'Falha ao adicionar em lote.' };
+      });
   }
 
   /* ---------- Entrada ------------------------------------------------------ */
@@ -695,6 +775,14 @@
 
   function listarMovimentacoes() { return estado.movimentacoes.slice(); }
 
+  /** Lê a auditoria sob demanda (não é espelhada em tempo real — tela de baixo tráfego). */
+  function listarAuditoria(limite) {
+    return colAuditoria().orderBy('registradoEm', 'desc').limit(limite || 200).get()
+      .then(function (snap) {
+        return snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+      });
+  }
+
   /* ---------- Manutenção de dados ------------------------------------------ */
 
   function exportarJSON() {
@@ -805,6 +893,13 @@
     listarMovimentacoes: listarMovimentacoes,
     resumo: resumo,
     serieMovimentacoes: serieMovimentacoes,
+
+    registrarAuditoria: registrarAuditoria,
+    listarAuditoria: listarAuditoria,
+
+    listarUsuarios: listarUsuarios,
+    excluirUsuario: excluirUsuario,
+    adicionarPerifericosEmLote: adicionarPerifericosEmLote,
 
     exportarJSON: exportarJSON,
     importarJSON: importarJSON,

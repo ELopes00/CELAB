@@ -62,8 +62,7 @@
                     'inputmode="numeric" placeholder="Ex.: 045112" autocomplete="off">' +
                   SAGETI.scanner.botaoHTML('en-tombo-novo', 'Ler tombo pela câmera') +
                 '</div>' +
-                '<span class="field__help" id="en-aviso-tombo"></span>' +
-                '<span class="field__error">Informe o tombo novo ou o antigo.</span>' +
+                '<span class="field__help" id="en-aviso-tombo">Pode ficar em branco e ser preenchido depois.</span>' +
               '</div>' +
 
               '<div class="field">' +
@@ -243,7 +242,12 @@
       var existente = SAGETI.store.acharPorTombo({
         tomboNovo: tomboNovo.value, tomboAntigo: tomboAntigo.value
       });
-      if (!existente) { aviso.textContent = ''; aviso.style.color = ''; return; }
+      if (!existente) {
+        aviso.textContent = (tomboNovo.value || tomboAntigo.value)
+          ? '' : 'Pode ficar em branco e ser preenchido depois.';
+        aviso.style.color = '';
+        return;
+      }
 
       aviso.textContent = 'Tombo já cadastrado (' + existente.equipamento + ' · ' +
         existente.modelo + ', status "' + existente.status + '"' +
@@ -272,11 +276,6 @@
 
       var dados = UI.dadosForm(form);
 
-      if (!dados.tomboNovo && !dados.tomboAntigo) {
-        UI.marcarErro(tomboNovo, 'Informe o tombo novo ou o antigo.');
-        return UI.toast('warn', 'Tombo obrigatório', 'Informe ao menos um número de tombo.');
-      }
-
       SAGETI.store.registrarEntrada(dados).then(function (r) {
         if (!r.ok) return UI.toast('error', 'Não foi possível registrar', r.erro);
 
@@ -291,14 +290,14 @@
           tomboNovo.value = '';
           tomboAntigo.value = '';
           container.querySelector('#en-servico').value = '';
-          aviso.textContent = '';
+          aviso.textContent = 'Pode ficar em branco e ser preenchido depois.';
           tomboNovo.focus();
         } else {
           form.reset();
           container.querySelector('#en-data').value = U.hoje();
           repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
           mostrarDescStatus();
-          aviso.textContent = '';
+          aviso.textContent = 'Pode ficar em branco e ser preenchido depois.';
         }
       });
     });

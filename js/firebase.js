@@ -29,12 +29,14 @@ window.SAGETI = window.SAGETI || {};
   var app = firebase.initializeApp(config);
   var auth = firebase.auth();
   var db = firebase.firestore();
+  var functions = firebase.functions();
 
   if (window.SAGETI_USE_EMULATOR) {
     auth.useEmulator('http://localhost:9099', { disableWarnings: true });
     db.useEmulator('localhost', 8090);
+    functions.useEmulator('localhost', 5001);
   }
 
-  SAGETI.fb = { app: app, auth: auth, db: db };
+  SAGETI.fb = { app: app, auth: auth, db: db, functions: functions };
 
 })(window.SAGETI);

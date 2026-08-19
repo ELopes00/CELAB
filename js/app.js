@@ -15,8 +15,17 @@
     { id: 'saida',         rotulo: 'Saída de Equipamentos',  icone: 'saida',     secao: 'Movimentação' },
     { id: 'relatorios',    rotulo: 'Relatórios e Filtros',   icone: 'relatorio', secao: 'Análise' },
     { id: 'fluxo',         rotulo: 'Painéis de Fluxo',       icone: 'grafico',   secao: 'Análise' },
-    { id: 'configuracoes', rotulo: 'Configurações',          icone: 'engrenagem', secao: 'Sistema' }
+    { id: 'configuracoes', rotulo: 'Configurações',          icone: 'engrenagem', secao: 'Sistema' },
+    { id: 'usuarios',      rotulo: 'Usuários',               icone: 'usuario',   secao: 'Sistema', restrita: true },
+    { id: 'auditoria',     rotulo: 'Auditoria',              icone: 'relogio',   secao: 'Sistema', restrita: true }
   ];
+
+  /** Rotas marcadas `restrita` só aparecem no menu para quem pode excluir (= admin). */
+  function podeVerRota(rota, usuario) {
+    if (!rota.restrita) return true;
+    var perfil = SAGETI.PERFIS[usuario.perfil] || {};
+    return !!perfil.podeExcluir;
+  }
 
   var raiz = null;
   var rotaAtual = null;
@@ -29,6 +38,7 @@
     var nav = '';
     var secaoAtual = '';
     ROTAS.forEach(function (r) {
+      if (!podeVerRota(r, usuario)) return;
       if (r.secao !== secaoAtual) {
         secaoAtual = r.secao;
         nav += '<div class="nav-section">' + U.esc(r.secao) + '</div>';
@@ -127,8 +137,18 @@
     paginaViva = null;
     rotaAtual = rota.id;
 
-    var pagina = document.getElementById('pagina');
-    pagina.innerHTML = '';
+    // Troca o container por um clone vazio (sem filhos, sem listeners) em vez
+    // de só limpar o innerHTML: cada página liga `container.addEventListener`
+    // no montar() e `destruir()` só cancela a assinatura do store, nunca
+    // remove esse listener — reaproveitar o mesmo nó ia empilhando um
+    // listener de clique por visita à aba, para sempre, pelo resto da sessão
+    // (é isso que fazia um clique em "Limpar" da aba Estoque também disparar
+    // a exportação de "Saída de Equipamentos", se essa aba já tivesse sido
+    // visitada antes: o listener antigo de saida.js continuava vivo e
+    // reagindo a cliques em outras páginas).
+    var paginaAntiga = document.getElementById('pagina');
+    var pagina = paginaAntiga.cloneNode(false);
+    paginaAntiga.parentNode.replaceChild(pagina, paginaAntiga);
 
     var modulo = SAGETI.pages[rota.id];
     if (!modulo) {

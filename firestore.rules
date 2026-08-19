@@ -1,17 +1,9 @@
 // ============================================================================
 // SAGE-TI — Regras de segurança do Firestore
 // ----------------------------------------------------------------------------
-// O app hoje guarda os dados em localStorage (veja js/store.js) — o
-// firebase.json deste repositório só cobre hospedagem estática, sem
-// Firestore ligado. Este arquivo é a referência pronta para o dia em que o
-// armazenamento migrar para o Firestore: o esquema de coleções abaixo
-// (equipamentos / movimentacoes / usuarios) espelha os campos que já existem
-// nos registros do store atual, para a migração ser só trocar a camada de
-// persistência, sem redesenhar o modelo de dados.
-//
-// Para habilitar: adicione ao firebase.json
-//   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" }
-// e publique com `firebase deploy --only firestore`.
+// Em produção (js/store.js, js/firebase.js): equipamentos, movimentacoes,
+// usuarios e auditoria vivem no Firestore do projeto `sagi-ti`. Publicar
+// mudanças aqui com `firebase deploy --only firestore:rules`.
 //
 // Perfis (espelham SAGETI.PERFIS em js/config.js):
 //   admin   — CRUD completo (é o único que pode excluir)
@@ -44,6 +36,12 @@ service cloud.firestore {
       return autenticado() && perfilDoUsuario() in ['admin', 'tecnico'];
     }
 
+    // Tombo é opcional (preenchido depois) — mas quando presente precisa ser
+    // string curta, nunca outro tipo nem um payload gigante.
+    function tomboValido(v) {
+      return v == null || (v is string && v.size() <= 40);
+    }
+
     // ---- usuarios: cada um lê o próprio perfil; só admin gerencia contas --
     match /usuarios/{uid} {
       allow read: if autenticado() && (request.auth.uid == uid || ehAdmin());
@@ -55,8 +53,12 @@ service cloud.firestore {
     // são os mesmos já gravados por SAGETI.store.registrarEntrada/registrarSaida.
     match /equipamentos/{id} {
       allow read: if autenticado();
-      allow create: if podeEscrever();
-      allow update: if podeEscrever();
+      allow create: if podeEscrever()
+        && tomboValido(request.resource.data.tomboNovo)
+        && tomboValido(request.resource.data.tomboAntigo);
+      allow update: if podeEscrever()
+        && tomboValido(request.resource.data.tomboNovo)
+        && tomboValido(request.resource.data.tomboAntigo);
       allow delete: if ehAdmin(); // técnico é bloqueado — regra central do requisito de RBAC
     }
 
@@ -65,6 +67,21 @@ service cloud.firestore {
       allow read: if autenticado();
       allow create: if podeEscrever();
       allow update, delete: if ehAdmin(); // histórico só é corrigido por admin, em último caso
+    }
+
+    // ---- auditoria: trilha de "quem mudou o quê" — append-only de verdade --
+    // Ninguém apaga nem edita um log, nem admin: é o que torna a auditoria
+    // confiável. `descricao` já vem pronta (texto simples) de js/store.js —
+    // aqui só garantimos forma e tamanho, nunca confiamos no campo bruto.
+    match /auditoria/{id} {
+      allow read: if autenticado();
+      allow create: if podeEscrever()
+        && request.resource.data.keys().hasOnly(['acao', 'entidade', 'entidadeId', 'descricao', 'usuario', 'registradoEm'])
+        && request.resource.data.acao is string && request.resource.data.acao.size() <= 60
+        && request.resource.data.entidade is string && request.resource.data.entidade.size() <= 40
+        && request.resource.data.descricao is string && request.resource.data.descricao.size() <= 500
+        && request.resource.data.usuario is string && request.resource.data.usuario.size() <= 80;
+      allow update, delete: if false;
     }
 
     // ---- listas: status, TTR, setores, técnicos, modelos etc. (gerenciador) --

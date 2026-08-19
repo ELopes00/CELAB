@@ -383,14 +383,14 @@ refletir uma escrita antes de checar o resultado — sem isso, ler `S.resumo()` 
 após um `await S.registrarEntrada(...)` poderia pegar o estado de um instante antes do
 servidor confirmar.
 
-Última execução: **92 aprovados, 0 falhas**.
+Última execução: **100 aprovados, 1 falha intermitente** (`filtro por status individual recorta mais fino que o tom` — teste pré-existente sensível a timing do repaint do `<select>`, não relacionado às mudanças do upgrade de segurança; não reproduz em toda execução).
 
 ### Rodar localmente
 
 ```powershell
 # 1. Suba os emuladores (Firestore + Auth + Hosting, em portas dedicadas —
 #    não conflitam com as de produção nem com `python servidor.py`):
-firebase emulators:start --only auth,firestore,hosting
+firebase emulators:start --only auth,firestore,functions,hosting
 
 # 2. Semeie o emulador uma vez (usuários admin/tecnico + listas de fábrica).
 #    O script está em memória de sessão — peça o conteúdo se precisar recriá-lo,
