@@ -37,6 +37,6 @@ window.SAGETI = window.SAGETI || {};
     functions.useEmulator('localhost', 5001);
   }
 
-  SAGETI.fb = { app: app, auth: auth, db: db, functions: functions };
+  SAGETI.fb = { app: app, auth: auth, db: db, functions: functions, config: config };
 
 })(window.SAGETI);

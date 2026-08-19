@@ -354,11 +354,12 @@
   }
 
   /* ---------- Chamadas para as Cloud Functions -------------------------------
-     Só existem duas: operações que o SDK do cliente não pode fazer com
-     segurança sozinho (excluir conta de Auth de verdade; inserir um lote
-     atômico com teto de negócio). Toda validação real está na função — a
-     checagem de `permissao()` aqui é só UX, igual ao padrão já usado em
-     `excluirEquipamento`.
+     Duas operações que o SDK do cliente não pode fazer com segurança
+     sozinho (excluir conta de Auth de verdade; inserir um lote atômico
+     com teto de negócio) — exigem o plano Blaze, então ficam condicionadas
+     a SAGETI.APP.cloudFunctionsHabilitadas no chamador. Toda validação
+     real está na função — a checagem de `permissao()` aqui é só UX,
+     igual ao padrão já usado em `excluirEquipamento`.
      -------------------------------------------------------------------- */
 
   function listarUsuarios() {
@@ -391,6 +392,134 @@
       .then(function (res) { return { ok: true, criados: res.data.criados }; })
       .catch(function (erro) {
         return { ok: false, erro: erro.message || 'Falha ao adicionar em lote.' };
+      });
+  }
+
+  /* ---------- Gestão de usuários (100% cliente — funciona no plano gratuito) -
+     `criarUsuario` e a exclusão real de conta (`excluirUsuario`, acima)
+     parecem simétricas mas não são: criar uma conta de Auth É permitido a
+     qualquer cliente (é o autocadastro padrão do Firebase Auth), então dá
+     pra fazer sem Admin SDK — só precisa de uma instância AUXILIAR do
+     Firebase App pra a chamada não trocar a sessão de quem está logado
+     (criar usuário autentica automaticamente como o usuário novo). Já
+     apagar a conta de OUTRA pessoa exige Admin SDK de verdade — sem Blaze,
+     o máximo é apagar o documento de perfil (`revogarAcessoUsuario`), que
+     derruba a permissão na hora mas não a conta de login em si.
+     -------------------------------------------------------------------- */
+
+  function mensagemErroCriacao(e) {
+    var codigo = e && e.code;
+    if (codigo === 'auth/email-already-in-use') return 'Já existe um usuário com esse nome.';
+    if (codigo === 'auth/weak-password') return 'Senha fraca demais — use ao menos 6 caracteres.';
+    if (codigo === 'auth/invalid-email') return 'Nome de usuário inválido.';
+    return 'Não foi possível criar o usuário: ' + ((e && e.message) || 'erro desconhecido.');
+  }
+
+  function criarUsuario(dados) {
+    if (!SAGETI.auth.permissao('podeExcluir')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não tem permissão para criar usuários.' });
+    }
+    var usuario = norm(dados.usuario).toLowerCase();
+    var nome = norm(dados.nome) || usuario;
+    var senha = String(dados.senha || '');
+    var perfil = SAGETI.PERFIS[dados.perfil] ? dados.perfil : 'leitura';
+    if (!usuario) return Promise.resolve({ ok: false, erro: 'Informe o nome de usuário.' });
+
+    // App auxiliar: cria a conta sem derrubar a sessão do admin no app
+    // principal. A escrita do doc usa `colUsuarios()` do app PRINCIPAL —
+    // é a sessão do admin (não a do usuário recém-criado) que as Rules
+    // exigem pra permitir `create` em /usuarios.
+    var appAux = firebase.initializeApp(SAGETI.fb.config, 'sage-ti-criar-' + Date.now());
+    var authAux = appAux.auth();
+    // O app auxiliar não herda o useEmulator() do app principal (cada
+    // instância liga no emulador por conta própria) — sem isto, em modo de
+    // teste a conta seria criada na produção de verdade, não no emulador.
+    if (window.SAGETI_USE_EMULATOR) authAux.useEmulator('http://localhost:9099', { disableWarnings: true });
+
+    return authAux.createUserWithEmailAndPassword(emailDoUsuario(usuario), senha)
+      .then(function (cred) {
+        var uid = cred.user.uid;
+        return colUsuarios().doc(uid).set({ usuario: usuario, nome: nome, perfil: perfil })
+          .then(function () {
+            registrarAuditoria('CRIACAO_USUARIO', 'usuarios', uid,
+              'Usuário "' + usuario + '" criado com perfil "' + perfil + '".');
+            return { ok: true, uid: uid };
+          });
+      })
+      .catch(function (e) {
+        return { ok: false, erro: mensagemErroCriacao(e) };
+      })
+      .then(function (resultado) {
+        // Sempre descarta a instância auxiliar, mesmo se algo falhou no meio.
+        return appAux.auth().signOut().catch(function () {}).then(function () {
+          return appAux.delete().catch(function () {});
+        }).then(function () { return resultado; });
+      });
+  }
+
+  function atualizarPerfilUsuario(uid, perfil) {
+    if (!SAGETI.auth.permissao('podeExcluir')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não tem permissão para alterar perfis.' });
+    }
+    var meuUid = (SAGETI.auth.usuarioAtual() || {}).uid;
+    if (uid === meuUid) {
+      return Promise.resolve({ ok: false, erro: 'Você não pode alterar o próprio perfil.' });
+    }
+    if (!SAGETI.PERFIS[perfil]) {
+      return Promise.resolve({ ok: false, erro: 'Perfil inválido.' });
+    }
+    return colUsuarios().doc(uid).update({ perfil: perfil })
+      .then(function () {
+        registrarAuditoria('ALTERACAO_PERFIL', 'usuarios', uid, 'Perfil alterado para "' + perfil + '".');
+        return { ok: true };
+      })
+      .catch(function (erro) {
+        return { ok: false, erro: erro.message || 'Falha ao alterar o perfil.' };
+      });
+  }
+
+  function revogarAcessoUsuario(uid) {
+    if (!SAGETI.auth.permissao('podeExcluir')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não tem permissão para revogar acesso.' });
+    }
+    var meuUid = (SAGETI.auth.usuarioAtual() || {}).uid;
+    if (uid === meuUid) {
+      return Promise.resolve({ ok: false, erro: 'Você não pode revogar o próprio acesso.' });
+    }
+    return colUsuarios().doc(uid).delete()
+      .then(function () {
+        registrarAuditoria('REVOGACAO_ACESSO', 'usuarios', uid,
+          'Acesso revogado — perfil removido (a conta de login continua existindo).');
+        return { ok: true };
+      })
+      .catch(function (erro) {
+        return { ok: false, erro: erro.message || 'Falha ao revogar acesso.' };
+      });
+  }
+
+  function mensagemErroSenha(e) {
+    var codigo = e && e.code;
+    if (codigo === 'auth/wrong-password' || codigo === 'auth/invalid-credential' ||
+        codigo === 'auth/invalid-login-credentials') return 'Senha atual incorreta.';
+    if (codigo === 'auth/weak-password') return 'Senha nova fraca demais — use ao menos 6 caracteres.';
+    if (codigo === 'auth/requires-recent-login') return 'Sessão antiga — saia e entre de novo antes de trocar a senha.';
+    return 'Não foi possível trocar a senha: ' + ((e && e.message) || 'erro desconhecido.');
+  }
+
+  /** Qualquer usuário autenticado troca a própria senha — sem guard de perfil. */
+  function alterarMinhaSenha(senhaAtual, novaSenha) {
+    var user = SAGETI.fb.auth.currentUser;
+    if (!user) return Promise.resolve({ ok: false, erro: 'Sessão não encontrada — faça login novamente.' });
+
+    var cred = firebase.auth.EmailAuthProvider.credential(user.email, senhaAtual);
+    return user.reauthenticateWithCredential(cred)
+      .then(function () { return user.updatePassword(novaSenha); })
+      .then(function () {
+        registrarAuditoria('ALTERACAO_SENHA', 'usuarios', user.uid, 'Senha alterada pelo próprio usuário.');
+        return { ok: true };
+      })
+      .catch(function (e) {
+        return { ok: false, erro: mensagemErroSenha(e) };
       });
   }
 
@@ -900,6 +1029,10 @@
     listarUsuarios: listarUsuarios,
     excluirUsuario: excluirUsuario,
     adicionarPerifericosEmLote: adicionarPerifericosEmLote,
+    criarUsuario: criarUsuario,
+    atualizarPerfilUsuario: atualizarPerfilUsuario,
+    revogarAcessoUsuario: revogarAcessoUsuario,
+    alterarMinhaSenha: alterarMinhaSenha,
 
     exportarJSON: exportarJSON,
     importarJSON: importarJSON,

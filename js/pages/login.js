@@ -135,7 +135,12 @@
       });
     });
 
-    setTimeout(function () { raiz.querySelector('#login-usuario').focus(); }, 60);
+    // Corrida possível: se a tela de login for substituída (login rápido,
+    // ou outro redirecionamento) antes destes 60ms, o campo já não existe mais.
+    setTimeout(function () {
+      var campo = raiz.querySelector('#login-usuario');
+      if (campo) campo.focus();
+    }, 60);
   }
 
   SAGETI.pages = SAGETI.pages || {};

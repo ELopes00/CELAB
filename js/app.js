@@ -78,12 +78,16 @@
 
           '<div class="sidebar__foot">' +
             '<div class="user-chip">' +
-              '<div class="user-chip__av">' + U.esc(iniciais) + '</div>' +
-              '<div style="min-width:0;flex:1">' +
-                '<div class="user-chip__name">' + U.esc(usuario.nome || usuario.usuario) + '</div>' +
-                '<div class="user-chip__role">' +
-                  U.esc((SAGETI.PERFIS[usuario.perfil] || {}).rotulo || usuario.perfil) + '</div>' +
-              '</div>' +
+              '<button type="button" class="user-chip__info" data-acao="meu-perfil" ' +
+                'title="Meu perfil — trocar senha" style="display:flex;align-items:center;gap:10px;' +
+                'flex:1;min-width:0;background:transparent;border:0;text-align:left;cursor:pointer;padding:0">' +
+                '<div class="user-chip__av">' + U.esc(iniciais) + '</div>' +
+                '<div style="min-width:0;flex:1">' +
+                  '<div class="user-chip__name">' + U.esc(usuario.nome || usuario.usuario) + '</div>' +
+                  '<div class="user-chip__role">' +
+                    U.esc((SAGETI.PERFIS[usuario.perfil] || {}).rotulo || usuario.perfil) + '</div>' +
+                '</div>' +
+              '</button>' +
               '<button class="icon-btn" data-acao="sair" title="Sair" aria-label="Sair" ' +
                 'style="background:transparent;border-color:rgba(255,255,255,.12);color:#c9cdd4;width:30px;height:30px">' +
                 UI.icone('sair', 15) + '</button>' +
@@ -296,6 +300,71 @@
     });
   }
 
+  /** Troca de senha do próprio usuário — nenhum guard de perfil, qualquer
+      conta logada pode trocar a própria senha (ver SAGETI.store.alterarMinhaSenha). */
+  function abrirMeuPerfil() {
+    var usuario = SAGETI.auth.usuarioAtual();
+    var corpo = '<div class="result-preview" style="margin-bottom:16px">' +
+        '<div class="result-preview__row"><span class="result-preview__k">Usuário</span>' +
+          '<span class="result-preview__v">' + U.esc(usuario.usuario) + '</span></div>' +
+        '<div class="result-preview__row"><span class="result-preview__k">Perfil</span>' +
+          '<span class="result-preview__v">' +
+            U.esc((SAGETI.PERFIS[usuario.perfil] || {}).rotulo || usuario.perfil) + '</span></div>' +
+      '</div>' +
+      '<div class="section-title" style="margin-top:0">Trocar senha</div>' +
+      '<form id="form-senha" novalidate><div class="form-grid">' +
+        '<div class="field field--full">' +
+          '<label for="senha-atual">Senha atual <span class="req">*</span></label>' +
+          '<input class="input" type="password" id="senha-atual" autocomplete="current-password" data-obrigatorio>' +
+          '<span class="field__error">Informe a senha atual.</span>' +
+        '</div>' +
+        '<div class="field">' +
+          '<label for="senha-nova">Nova senha <span class="req">*</span></label>' +
+          '<input class="input" type="password" id="senha-nova" autocomplete="new-password" ' +
+            'minlength="6" data-obrigatorio>' +
+          '<span class="field__help">Mínimo de 6 caracteres.</span>' +
+          '<span class="field__error">Nova senha muito curta.</span>' +
+        '</div>' +
+        '<div class="field">' +
+          '<label for="senha-nova2">Confirmar nova senha <span class="req">*</span></label>' +
+          '<input class="input" type="password" id="senha-nova2" autocomplete="new-password" data-obrigatorio>' +
+          '<span class="field__error">As senhas não coincidem.</span>' +
+        '</div>' +
+      '</div></form>';
+
+    UI.modal({
+      titulo: 'Meu perfil',
+      subtitulo: SAGETI.APP.nome,
+      corpo: corpo,
+      botoes: [
+        { texto: 'Fechar', classe: 'btn--ghost' },
+        {
+          texto: 'Trocar senha', classe: 'btn--primary', icone: 'check',
+          acao: function (caixa) {
+            var form = caixa.querySelector('#form-senha');
+            if (!UI.validarForm(form)) {
+              UI.toast('warn', 'Campos obrigatórios', 'Preencha os campos destacados.');
+              return false;
+            }
+            var atual = caixa.querySelector('#senha-atual').value;
+            var nova = caixa.querySelector('#senha-nova').value;
+            var nova2 = caixa.querySelector('#senha-nova2').value;
+            if (nova !== nova2) {
+              UI.marcarErro(caixa.querySelector('#senha-nova2'), 'As senhas não coincidem.');
+              return false;
+            }
+            SAGETI.store.alterarMinhaSenha(atual, nova).then(function (r) {
+              if (!r.ok) return UI.toast('error', 'Não foi possível trocar a senha', r.erro);
+              UI.fecharModal();
+              UI.toast('success', 'Senha alterada', 'Use a nova senha no próximo login.');
+            });
+            return false;
+          }
+        }
+      ]
+    });
+  }
+
   /* ---------- Eventos globais do shell -------------------------------------------- */
 
   function pintarBotaoTema() {
@@ -362,6 +431,7 @@
         if (acao === 'menu') return abrirSidebarMobile();
         if (acao === 'tema') { UI.alternarTema(); return pintarBotaoTema(); }
         if (acao === 'config') return abrirConfig();
+        if (acao === 'meu-perfil') return abrirMeuPerfil();
         if (acao === 'importar') { fecharSidebarMobile(); return SAGETI.importar.abrir(); }
 
         // Na barra superior o dropdown basta; na sidebar (que fecha no

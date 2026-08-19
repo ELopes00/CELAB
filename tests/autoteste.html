@@ -650,6 +650,101 @@
           }
         });
 
+        /* ---- 9f. Gestão de usuários no plano gratuito (sem Cloud Functions) ---- */
+        var probeUsuario = 'probefree' + Date.now();
+        var probeSenhaOriginal = 'ProbeSenha123';
+        var probeSenhaNova = 'NovaSenhaProbe456';
+        var probeUidFree = null;
+
+        await t('criarUsuario cria a conta sem derrubar a sessão do admin', async function () {
+          var meuUidAntes = C.auth.usuarioAtual().uid;
+          var r = await S.criarUsuario({
+            usuario: probeUsuario, nome: 'Probe Plano Gratuito', senha: probeSenhaOriginal, perfil: 'tecnico'
+          });
+          if (!r.ok) throw new Error(r.erro);
+          probeUidFree = r.uid;
+          eq(C.auth.usuarioAtual().uid, meuUidAntes, 'sessão do admin não mudou');
+          var doc = await C.fb.db.collection('usuarios').doc(probeUidFree).get();
+          if (!doc.exists) throw new Error('documento usuarios/{uid} não foi criado');
+          eq(doc.data().perfil, 'tecnico', 'perfil gravado');
+          return 'criado: ' + probeUsuario;
+        });
+
+        await t('atualizarPerfilUsuario muda o perfil de outro usuário', async function () {
+          var r = await S.atualizarPerfilUsuario(probeUidFree, 'admin');
+          if (!r.ok) throw new Error(r.erro);
+          var doc = await C.fb.db.collection('usuarios').doc(probeUidFree).get();
+          return eq(doc.data().perfil, 'admin', 'perfil atualizado');
+        });
+
+        await t('atualizarPerfilUsuario bloqueia alterar o próprio perfil', async function () {
+          var r = await S.atualizarPerfilUsuario(C.auth.usuarioAtual().uid, 'tecnico');
+          if (r.ok) throw new Error('permitiu o admin alterar o próprio perfil');
+          return 'bloqueado: ' + r.erro;
+        });
+
+        await t('alterarMinhaSenha: senha atual errada é recusada, senha certa funciona', async function () {
+          try {
+            var loginProbe = await C.auth.entrar(probeUsuario, probeSenhaOriginal);
+            if (!loginProbe.ok) throw new Error('não conseguiu logar como probe: ' + loginProbe.erro);
+            await aguardar(function () { return S.listarEquipamentos().length > 0; });
+
+            var errado = await S.alterarMinhaSenha('SenhaErrada999', probeSenhaNova);
+            if (errado.ok) throw new Error('aceitou senha atual errada');
+
+            var certo = await S.alterarMinhaSenha(probeSenhaOriginal, probeSenhaNova);
+            if (!certo.ok) throw new Error('não trocou com a senha certa: ' + certo.erro);
+
+            await C.auth.sair();
+            var comSenhaVelha = await C.auth.entrar(probeUsuario, probeSenhaOriginal);
+            if (comSenhaVelha.ok) throw new Error('a senha antiga ainda funciona depois da troca');
+
+            var comSenhaNova = await C.auth.entrar(probeUsuario, probeSenhaNova);
+            if (!comSenhaNova.ok) throw new Error('a senha nova não funcionou: ' + comSenhaNova.erro);
+
+            return 'senha trocada e confirmada nos dois sentidos';
+          } finally {
+            var voltouSenha = await C.auth.entrar('admin', 'root123');
+            if (voltouSenha.ok) await aguardar(function () { return S.listarEquipamentos().length > 0; });
+          }
+        });
+
+        await t('revogarAcessoUsuario bloqueia contra o próprio uid', async function () {
+          var r = await S.revogarAcessoUsuario(C.auth.usuarioAtual().uid);
+          if (r.ok) throw new Error('permitiu revogar o próprio acesso');
+          return 'bloqueado: ' + r.erro;
+        });
+
+        await t('revogarAcessoUsuario apaga o doc; login ainda funciona mas cai pra leitura', async function () {
+          var r = await S.revogarAcessoUsuario(probeUidFree);
+          if (!r.ok) throw new Error(r.erro);
+          var doc = await C.fb.db.collection('usuarios').doc(probeUidFree).get();
+          if (doc.exists) throw new Error('documento ainda existe depois de revogar');
+
+          try {
+            var loginDepois = await C.auth.entrar(probeUsuario, probeSenhaNova);
+            if (!loginDepois.ok) throw new Error('login parou de funcionar (deveria continuar): ' + loginDepois.erro);
+            eq(C.auth.usuarioAtual().perfil, 'leitura', 'perfil após revogar');
+            return 'acesso revogado: login funciona, perfil caiu pra leitura';
+          } finally {
+            var voltouRevogar = await C.auth.entrar('admin', 'root123');
+            if (voltouRevogar.ok) await aguardar(function () { return S.listarEquipamentos().length > 0; });
+          }
+        });
+
+        await t('limpeza: excluirUsuario (Cloud Function) remove a conta probe de vez', async function () {
+          var r = await S.excluirUsuario(probeUidFree);
+          if (!r.ok) throw new Error(r.erro);
+          try {
+            await C.fb.auth.signInWithEmailAndPassword(
+              probeUsuario.toLowerCase() + '@' + C.APP.authDominio, probeSenhaNova);
+            throw new Error('a conta de Auth ainda consegue logar depois da exclusão');
+          } catch (e) {
+            if (!/user-not-found|invalid-credential|invalid-login-credentials/i.test(e.code || '')) throw e;
+          }
+          return 'conta probe totalmente removida';
+        });
+
         /* ---- 10. Camada visual ---- */
         await t('chips de status cobrem os status cadastrados', function () {
           C.STATUS_TODOS.forEach(function (s) {

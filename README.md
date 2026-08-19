@@ -383,7 +383,7 @@ refletir uma escrita antes de checar o resultado — sem isso, ler `S.resumo()` 
 após um `await S.registrarEntrada(...)` poderia pegar o estado de um instante antes do
 servidor confirmar.
 
-Última execução: **100 aprovados, 1 falha intermitente** (`filtro por status individual recorta mais fino que o tom` — teste pré-existente sensível a timing do repaint do `<select>`, não relacionado às mudanças do upgrade de segurança; não reproduz em toda execução).
+Última execução: **108 aprovados, 0 falhas** (emulador recém-iniciado — rodadas consecutivas sem reiniciar o emulador podem ficar mais lentas e gerar timeouts intermitentes em testes de sincronização; reinicie os emuladores entre execuções se isso acontecer).
 
 ### Rodar localmente
 
