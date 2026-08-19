@@ -27,7 +27,14 @@ window.SAGETI = window.SAGETI || {};
     listasKey: 'celab.listas.v1',
     sessionKey: 'celab.session.v1',
     themeKey: 'celab.theme',
-    channel: 'celab-realtime'
+    channel: 'celab-realtime',
+    // O projeto Firebase ainda está no plano Spark — Cloud Functions exige
+    // Blaze mesmo dentro da cota gratuita, então `excluirUsuario` e
+    // `adicionarPerifericosEmLote` (functions/index.js) não estão publicadas
+    // em produção ainda. Os botões que dependem delas ficam escondidos até
+    // aqui virar `true` (depois do upgrade pro Blaze + `firebase deploy
+    // --only functions`).
+    cloudFunctionsHabilitadas: false
   };
 
   /* ======================================================================

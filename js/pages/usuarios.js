@@ -59,7 +59,10 @@
 
     usuarios.forEach(function (u) {
       var rotuloPerfil = (SAGETI.PERFIS[u.perfil] || {}).rotulo || u.perfil || '—';
-      var podeExcluirEste = SAGETI.auth.permissao('podeExcluir') && u.id !== meuUid;
+      // Também depende da Cloud Function excluirUsuario, ainda não publicada
+      // (ver SAGETI.APP.cloudFunctionsHabilitadas em js/config.js).
+      var podeExcluirEste = SAGETI.APP.cloudFunctionsHabilitadas &&
+        SAGETI.auth.permissao('podeExcluir') && u.id !== meuUid;
 
       html += '<tr data-id="' + U.esc(u.id) + '">' +
         '<td class="strong">' + U.esc(u.usuario || '—') + '</td>' +

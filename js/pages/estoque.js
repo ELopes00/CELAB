@@ -80,8 +80,10 @@
             UI.icone('excel', 14) + '<span>Excel</span></button>' +
           '<button class="btn btn--outline btn--sm" data-acao="pdf">' +
             UI.icone('pdf', 14) + '<span>PDF</span></button>' +
-          '<button class="btn btn--outline" data-acao="lote">' +
-            UI.icone('plus', 14) + '<span>Adicionar em lote</span></button>' +
+          (SAGETI.APP.cloudFunctionsHabilitadas
+            ? '<button class="btn btn--outline" data-acao="lote">' +
+              UI.icone('plus', 14) + '<span>Adicionar em lote</span></button>'
+            : '') +
           '<button class="btn btn--primary" data-acao="novo">' +
             UI.icone('plus', 16) + '<span>Adicionar Equipamento</span></button>' +
         '</div>' +
