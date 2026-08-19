@@ -74,7 +74,7 @@ service cloud.firestore {
     // confiável. `descricao` já vem pronta (texto simples) de js/store.js —
     // aqui só garantimos forma e tamanho, nunca confiamos no campo bruto.
     match /auditoria/{id} {
-      allow read: if autenticado();
+      allow read: if ehAdmin(); // a tela (js/pages/auditoria.js) já é admin-only — a regra passa a bater com isso
       allow create: if podeEscrever()
         && request.resource.data.keys().hasOnly(['acao', 'entidade', 'entidadeId', 'descricao', 'usuario', 'registradoEm'])
         && request.resource.data.acao is string && request.resource.data.acao.size() <= 60

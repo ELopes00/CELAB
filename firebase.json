@@ -6,7 +6,16 @@
       "ignore": [
         "firebase.json",
         "**/.*",
-        "**/node_modules/**"
+        "**/node_modules/**",
+        "tests/**",
+        "functions/**",
+        "js/config.properties*.js",
+        "package.json",
+        "package-lock.json",
+        "servidor.py",
+        "doc.txt",
+        "assets/LEIA-ME.txt",
+        "README.md"
       ]
     },
     {
@@ -15,7 +24,16 @@
       "ignore": [
         "firebase.json",
         "**/.*",
-        "**/node_modules/**"
+        "**/node_modules/**",
+        "tests/**",
+        "functions/**",
+        "js/config.properties*.js",
+        "package.json",
+        "package-lock.json",
+        "servidor.py",
+        "doc.txt",
+        "assets/LEIA-ME.txt",
+        "README.md"
       ],
       "redirects": [
         { "source": "**", "destination": "https://sage-ti.web.app", "type": 301 }
