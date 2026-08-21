@@ -80,10 +80,8 @@
             UI.icone('excel', 14) + '<span>Excel</span></button>' +
           '<button class="btn btn--outline btn--sm" data-acao="pdf">' +
             UI.icone('pdf', 14) + '<span>PDF</span></button>' +
-          (SAGETI.APP.cloudFunctionsHabilitadas
-            ? '<button class="btn btn--outline" data-acao="lote">' +
-              UI.icone('plus', 14) + '<span>Adicionar em lote</span></button>'
-            : '') +
+          '<button class="btn btn--outline" data-acao="lote">' +
+            UI.icone('plus', 14) + '<span>Adicionar em lote</span></button>' +
           '<button class="btn btn--primary" data-acao="novo">' +
             UI.icone('plus', 16) + '<span>Adicionar Equipamento</span></button>' +
         '</div>' +
@@ -436,9 +434,12 @@
   }
 
   /* ---------- Adicionar em lote (periféricos) --------------------------------
-     Chama a Cloud Function `adicionarPerifericosEmLote` (Admin SDK, batch
-     atômico) — o `max="500"` do input é só UX; quem barra de verdade um
-     "999999" é a validação dentro da função (ver functions/index.js).
+     Com Cloud Functions habilitadas (plano Blaze), chama a função
+     `adicionarPerifericosEmLote` (Admin SDK, batch atômico) — o `max="500"`
+     do input é só UX; quem barra de verdade um "999999" é a validação dentro
+     da função (ver functions/index.js). Sem Blaze, cai para
+     `adicionarPerifericosEmLoteCliente` (store.js), que faz o mesmo cadastro
+     em sequência, uma chamada por unidade, 100% no cliente.
      ---------------------------------------------------------------------- */
 
   function abrirLote() {
@@ -477,10 +478,19 @@
             var dados = UI.dadosForm(form);
             dados.quantidade = Number(dados.quantidade);
 
-            SAGETI.store.adicionarPerifericosEmLote(dados).then(function (r) {
+            var chamarLote = SAGETI.APP.cloudFunctionsHabilitadas
+              ? SAGETI.store.adicionarPerifericosEmLote
+              : SAGETI.store.adicionarPerifericosEmLoteCliente;
+
+            chamarLote(dados).then(function (r) {
               if (!r.ok) return UI.toast('error', 'Não foi possível adicionar', r.erro);
               UI.fecharModal();
-              UI.toast('success', 'Lote adicionado', r.criados + ' item(ns) criado(s).');
+              if (r.erro) {
+                UI.toast('warn', r.criados + ' de ' + dados.quantidade + ' itens adicionados',
+                  'Um dos itens falhou: ' + r.erro);
+              } else {
+                UI.toast('success', 'Lote adicionado', r.criados + ' item(ns) criado(s).');
+              }
             });
             return false;
           }

@@ -75,6 +75,15 @@
               '</div>' +
 
               '<div class="field">' +
+                '<label for="en-quantidade">Quantidade <span class="req">*</span></label>' +
+                '<input class="input" type="number" id="en-quantidade" name="quantidade" ' +
+                  'min="1" max="200" step="1" value="1" data-obrigatorio>' +
+                '<span class="field__help" id="en-aviso-quantidade">Só disponível com os tombos em branco — ' +
+                  'ideal para periféricos sem tombo individual (ex.: mouses, cabos, headsets).</span>' +
+                '<span class="field__error">Informe uma quantidade válida.</span>' +
+              '</div>' +
+
+              '<div class="field">' +
                 '<label for="en-equipamento">Equipamento <span class="req">*</span></label>' +
                 UI.selectGerenciavel({
                   id: 'en-equipamento', name: 'equipamento',
@@ -226,6 +235,7 @@
     var tomboNovo = container.querySelector('#en-tombo-novo');
     var tomboAntigo = container.querySelector('#en-tombo-antigo');
     var aviso = container.querySelector('#en-aviso-tombo');
+    var campoQtd = container.querySelector('#en-quantidade');
 
     var repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
     SAGETI.scanner.ligarBotoes(container);
@@ -264,6 +274,33 @@
     tomboNovo.addEventListener('blur', checarTombo);
     tomboAntigo.addEventListener('blur', checarTombo);
 
+    /* Quantidade > 1 só faz sentido sem tombo individual (ex.: periféricos). */
+    function sincronizarQuantidade() {
+      var temTombo = !!(tomboNovo.value.trim() || tomboAntigo.value.trim());
+      campoQtd.disabled = temTombo;
+      if (temTombo) campoQtd.value = 1;
+    }
+    tomboNovo.addEventListener('input', sincronizarQuantidade);
+    tomboAntigo.addEventListener('input', sincronizarQuantidade);
+    sincronizarQuantidade();
+
+    /** Registra a mesma entrada `quantidade` vezes em sequência (sem tombo). */
+    function registrarEmLote(dados, quantidade) {
+      var restantes = quantidade;
+      var sucesso = 0;
+      var erro = null;
+      function proximo() {
+        if (restantes <= 0) return Promise.resolve();
+        restantes--;
+        return SAGETI.store.registrarEntrada(dados).then(function (r) {
+          if (!r.ok) { erro = r.erro; return; }
+          sucesso++;
+          return proximo();
+        });
+      }
+      return proximo().then(function () { return { sucesso: sucesso, erro: erro }; });
+    }
+
     form.addEventListener('submit', function (e) {
       e.preventDefault();
 
@@ -275,16 +312,17 @@
       }
 
       var dados = UI.dadosForm(form);
+      var quantidade = Math.max(1, Math.min(200, parseInt(dados.quantidade, 10) || 1));
 
-      SAGETI.store.registrarEntrada(dados).then(function (r) {
-        if (!r.ok) return UI.toast('error', 'Não foi possível registrar', r.erro);
+      if (quantidade > 1 && (tomboNovo.value.trim() || tomboAntigo.value.trim())) {
+        UI.marcarErro(campoQtd, 'Quantidade só pode ser maior que 1 com os tombos em branco.');
+        return UI.toast('warn', 'Quantidade não permitida',
+          'Cada tombo identifica um equipamento único — deixe os tombos em branco para adicionar vários de uma vez.');
+      }
 
-        UI.toast('success',
-          r.criado ? 'Entrada registrada' : 'Reentrada registrada',
-          r.equipamento.equipamento + ' · tombo ' +
-          (r.equipamento.tomboNovo || r.equipamento.tomboAntigo) +
-          ' — estoque e dashboard atualizados.');
-
+      function limparParaProximo() {
+        campoQtd.value = 1;
+        campoQtd.disabled = false;
         if (container.querySelector('#en-continuar').checked) {
           // Preserva data, prédio, setor e chamado; zera o que identifica o item.
           tomboNovo.value = '';
@@ -299,6 +337,34 @@
           mostrarDescStatus();
           aviso.textContent = 'Pode ficar em branco e ser preenchido depois.';
         }
+      }
+
+      if (quantidade > 1) {
+        registrarEmLote(dados, quantidade).then(function (r) {
+          if (r.sucesso === 0) return UI.toast('error', 'Não foi possível registrar', r.erro);
+
+          if (r.erro) {
+            UI.toast('warn', r.sucesso + ' de ' + quantidade + ' itens adicionados',
+              'Um dos itens falhou: ' + r.erro);
+          } else {
+            UI.toast('success', r.sucesso + ' equipamentos adicionados',
+              dados.equipamento + ' · ' + dados.modelo + ' — estoque e dashboard atualizados.');
+          }
+          limparParaProximo();
+        });
+        return;
+      }
+
+      SAGETI.store.registrarEntrada(dados).then(function (r) {
+        if (!r.ok) return UI.toast('error', 'Não foi possível registrar', r.erro);
+
+        UI.toast('success',
+          r.criado ? 'Entrada registrada' : 'Reentrada registrada',
+          r.equipamento.equipamento + ' · tombo ' +
+          (r.equipamento.tomboNovo || r.equipamento.tomboAntigo) +
+          ' — estoque e dashboard atualizados.');
+
+        limparParaProximo();
       });
     });
 
@@ -308,6 +374,7 @@
         repintarModelos = UI.ligarEquipamentoModelo(selEquip, selModelo);
         mostrarDescStatus();
         aviso.textContent = '';
+        sincronizarQuantidade();
         container.querySelectorAll('.field').forEach(function (f) { f.classList.remove('has-error'); });
       }, 0);
     });

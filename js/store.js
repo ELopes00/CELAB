@@ -395,6 +395,40 @@
       });
   }
 
+  /** Alternativa 100% cliente a `adicionarPerifericosEmLote`: usada quando as
+      Cloud Functions não estão habilitadas (plano Spark) — mesmo padrão da
+      seção "Gestão de usuários" logo abaixo. Sem tombo, `criarEquipamento`
+      nunca encontra duplicata (ver `chaveTombo`), então basta repetir a
+      chamada em sequência, uma vez por unidade — cada item ganha seu próprio
+      registro de CADASTRO no histórico, igual ao cadastro individual. */
+  function adicionarPerifericosEmLoteCliente(dados) {
+    if (!SAGETI.auth.permissao('podeEditar')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não pode cadastrar equipamentos.' });
+    }
+    var quantidade = Math.max(1, Math.min(500, parseInt(dados.quantidade, 10) || 0));
+    if (!quantidade) return Promise.resolve({ ok: false, erro: 'Informe uma quantidade válida.' });
+
+    var base = Object.assign({}, dados);
+    delete base.quantidade;
+
+    var restantes = quantidade;
+    var criados = 0;
+    var erro = null;
+    function proximo() {
+      if (restantes <= 0) return Promise.resolve();
+      restantes--;
+      return criarEquipamento(base).then(function (r) {
+        if (!r.ok) { erro = r.erro; return; }
+        criados++;
+        return proximo();
+      });
+    }
+    return proximo().then(function () {
+      if (!criados) return { ok: false, erro: erro || 'Nenhum item foi criado.' };
+      return { ok: true, criados: criados, erro: criados < quantidade ? erro : null };
+    });
+  }
+
   /* ---------- Gestão de usuários (100% cliente — funciona no plano gratuito) -
      `criarUsuario` e a exclusão real de conta (`excluirUsuario`, acima)
      parecem simétricas mas não são: criar uma conta de Auth É permitido a
@@ -1029,6 +1063,7 @@
     listarUsuarios: listarUsuarios,
     excluirUsuario: excluirUsuario,
     adicionarPerifericosEmLote: adicionarPerifericosEmLote,
+    adicionarPerifericosEmLoteCliente: adicionarPerifericosEmLoteCliente,
     criarUsuario: criarUsuario,
     atualizarPerfilUsuario: atualizarPerfilUsuario,
     revogarAcessoUsuario: revogarAcessoUsuario,
