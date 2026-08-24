@@ -11,6 +11,7 @@
   var ROTAS = [
     { id: 'dashboard',     rotulo: 'Dashboard',              icone: 'dashboard', secao: 'Principal' },
     { id: 'estoque',       rotulo: 'Estoque Laboratório',    icone: 'caixa',     secao: 'Principal', contador: 'lab' },
+    { id: 'notebooks',     rotulo: 'Notebooks',              icone: 'notebook',  secao: 'Principal' },
     { id: 'entrada',       rotulo: 'Entrada de Equipamentos',icone: 'entrada',   secao: 'Movimentação' },
     { id: 'saida',         rotulo: 'Saída de Equipamentos',  icone: 'saida',     secao: 'Movimentação' },
     { id: 'relatorios',    rotulo: 'Relatórios e Filtros',   icone: 'relatorio', secao: 'Análise' },

@@ -90,6 +90,20 @@ service cloud.firestore {
       allow write: if podeEscrever(); // tecnico também gerencia listas (SAGETI.PERFIS.tecnico.podeGerenciarListas)
     }
 
+    // ---- notebooks: inventário de notebooks (Tombo, Local/Setor, status fechado) --
+    // Status não passa pelo sistema de listas editáveis (SAGETI.listas) — é um
+    // conjunto fechado de 3 valores, validado aqui como defesa em profundidade.
+    match /notebooks/{id} {
+      allow read: if autenticado();
+      allow create: if podeEscrever()
+        && tomboValido(request.resource.data.tombo)
+        && request.resource.data.status in ['Em estoque', 'Disponibilizado', 'Garantia'];
+      allow update: if podeEscrever()
+        && tomboValido(request.resource.data.tombo)
+        && request.resource.data.status in ['Em estoque', 'Disponibilizado', 'Garantia'];
+      allow delete: if ehAdmin();
+    }
+
     // Qualquer coleção fora do esquema acima fica fechada por padrão.
     match /{document=**} {
       allow read, write: if false;

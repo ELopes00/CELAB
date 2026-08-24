@@ -54,11 +54,13 @@
   var estado = {
     equipamentos: [],
     movimentacoes: [],
+    notebooks: [],
     meta: { criadoEm: null, versao: 2 }
   };
 
   function colEquip() { return SAGETI.fb.db.collection('equipamentos'); }
   function colMov() { return SAGETI.fb.db.collection('movimentacoes'); }
+  function colNotebooks() { return SAGETI.fb.db.collection('notebooks'); }
   function colUsuarios() { return SAGETI.fb.db.collection('usuarios'); }
   function colAuditoria() { return SAGETI.fb.db.collection('auditoria'); }
 
@@ -119,7 +121,7 @@
 
   /* ---------- Listeners em tempo real (equipamentos / movimentações) -------- */
 
-  var pararEquip = null, pararMov = null;
+  var pararEquip = null, pararMov = null, pararNotebooks = null;
 
   /** Liga os listeners do Firestore — só depois de autenticado (regras exigem). */
   function ligarListenersDados() {
@@ -142,13 +144,24 @@
     }, function (erro) {
       console.error('[SAGE-TI] Falha ao sincronizar movimentações:', erro);
     });
+
+    pararNotebooks = colNotebooks().onSnapshot(function (snap) {
+      estado.notebooks = snap.docs.map(function (d) {
+        return Object.assign({ id: d.id }, d.data());
+      });
+      emit({ tipo: 'sync' });
+    }, function (erro) {
+      console.error('[SAGE-TI] Falha ao sincronizar notebooks:', erro);
+    });
   }
 
   function desligarListenersDados() {
     if (pararEquip) { pararEquip(); pararEquip = null; }
     if (pararMov) { pararMov(); pararMov = null; }
+    if (pararNotebooks) { pararNotebooks(); pararNotebooks = null; }
     estado.equipamentos = [];
     estado.movimentacoes = [];
+    estado.notebooks = [];
   }
 
   /* ---------- Histórico ---------------------------------------------------- */
@@ -348,6 +361,116 @@
       });
     }).then(function () {
       return { ok: true, equipamento: eq };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao excluir no Firestore: ' + erro.message };
+    });
+  }
+
+  /* ---------- Notebooks ------------------------------------------------------
+     Coleção própria, separada de `equipamentos` — status é um conjunto
+     FECHADO de 3 valores (não passa por SAGETI.listas), e Local/Setor de
+     destino só faz sentido quando "Disponibilizado". Histórico de mudanças
+     vai para `auditoria` (genérica), não para `movimentacoes` (moldada para
+     o esquema de equipamento — reaproveitá-la corromperia colunas em
+     Relatórios). Mesmo contrato de criarEquipamento/atualizarEquipamento:
+     Promise<{ok:true, notebook}> ou Promise<{ok:false, erro}>.
+     -------------------------------------------------------------------- */
+
+  function listarNotebooks() { return estado.notebooks.slice(); }
+
+  function acharNotebookPorId(id) {
+    return estado.notebooks.find(function (n) { return n.id === id; }) || null;
+  }
+
+  function acharNotebookPorTombo(tombo) {
+    var t = norm(tombo).toUpperCase();
+    if (!t) return null;
+    return estado.notebooks.find(function (n) { return norm(n.tombo).toUpperCase() === t; }) || null;
+  }
+
+  function novoNotebook(dados) {
+    return {
+      tombo: norm(dados.tombo),
+      modelo: norm(dados.modelo),
+      predio: norm(dados.predio),
+      setor: norm(dados.setor),
+      status: dados.status || 'Em estoque',
+      chamado: norm(dados.chamado),
+      observacoes: { sistemaOperacional: '', versaoBuild: '', licenca: '', notas: '' },
+      criadoEm: agora(),
+      atualizadoEm: agora()
+    };
+  }
+
+  function criarNotebook(dados) {
+    var duplicado = acharNotebookPorTombo(dados.tombo);
+    if (duplicado) {
+      return Promise.resolve({
+        ok: false,
+        erro: 'Já existe um notebook com o tombo ' + dados.tombo + '.',
+        notebook: duplicado
+      });
+    }
+    var nb = novoNotebook(dados);
+    return colNotebooks().add(nb).then(function (ref) {
+      nb.id = ref.id;
+      return registrarAuditoria('NOTEBOOK_CADASTRO', 'notebooks', nb.id,
+        'Notebook ' + nb.tombo + ' (' + nb.modelo + ') cadastrado.');
+    }).then(function () {
+      return { ok: true, notebook: nb };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao gravar no Firestore: ' + erro.message };
+    });
+  }
+
+  /** Usada tanto pela edição inline de Local/Setor quanto pelo modal de
+      Observações. Atenção: `mudancas.observacoes`, quando enviado, precisa
+      vir com o objeto INTEIRO — `.update()` substitui o mapa aninhado,
+      não faz merge parcial dos campos internos. */
+  function atualizarNotebook(id, mudancas) {
+    var nb = acharNotebookPorId(id);
+    if (!nb) return Promise.resolve({ ok: false, erro: 'Notebook não encontrado.' });
+
+    if (mudancas.tombo !== undefined) {
+      var novoTombo = norm(mudancas.tombo).toUpperCase();
+      var colisao = novoTombo && estado.notebooks.find(function (o) {
+        return o.id !== id && norm(o.tombo).toUpperCase() === novoTombo;
+      });
+      if (colisao) return Promise.resolve({ ok: false, erro: 'O tombo informado já pertence a outro notebook.' });
+    }
+
+    var patch = {};
+    Object.keys(mudancas).forEach(function (k) {
+      if (mudancas[k] !== undefined) patch[k] = mudancas[k];
+    });
+    patch.atualizadoEm = agora();
+
+    var nbAtualizado = Object.assign({}, nb, patch);
+
+    return colNotebooks().doc(id).update(patch).then(function () {
+      return registrarAuditoria('NOTEBOOK_AJUSTE', 'notebooks', id,
+        'Notebook ' + nb.tombo + ' atualizado.');
+    }).then(function () {
+      return { ok: true, notebook: nbAtualizado };
+    }).catch(function (erro) {
+      return { ok: false, erro: 'Falha ao gravar no Firestore: ' + erro.message };
+    });
+  }
+
+  function excluirNotebook(id) {
+    // Mesma defesa em profundidade de excluirEquipamento: UI esconde o botão,
+    // isto bloqueia uma chamada direta pelo console, e as Rules bloqueiam de novo.
+    if (SAGETI.auth && !SAGETI.auth.permissao('podeExcluir')) {
+      return Promise.resolve({ ok: false, erro: 'Seu perfil não tem permissão para excluir notebooks.' });
+    }
+    var nb = acharNotebookPorId(id);
+    if (!nb) return Promise.resolve({ ok: false, erro: 'Notebook não encontrado.' });
+
+    return colNotebooks().doc(id).delete().then(function () {
+      return registrarAuditoria('NOTEBOOK_EXCLUSAO', 'notebooks', id,
+        'Notebook ' + nb.tombo + ' (' + nb.modelo + ') excluído.');
+    }).then(function () {
+      return { ok: true, notebook: nb };
     }).catch(function (erro) {
       return { ok: false, erro: 'Falha ao excluir no Firestore: ' + erro.message };
     });
@@ -1048,6 +1171,13 @@
     criarEquipamento: criarEquipamento,
     atualizarEquipamento: atualizarEquipamento,
     excluirEquipamento: excluirEquipamento,
+
+    listarNotebooks: listarNotebooks,
+    acharNotebookPorId: acharNotebookPorId,
+    acharNotebookPorTombo: acharNotebookPorTombo,
+    criarNotebook: criarNotebook,
+    atualizarNotebook: atualizarNotebook,
+    excluirNotebook: excluirNotebook,
 
     registrarEntrada: registrarEntrada,
     registrarSaida: registrarSaida,
